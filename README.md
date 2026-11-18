@@ -513,13 +513,23 @@ Python 通过 `PostMessage(WM_KEYDOWN/WM_KEYUP)` 向 WoW 窗口发送按键：
 无限服的 secret 机制会让部分光环字段在战斗中变成不可比较的值。`/cy auraprobe` 逐字段试读，
 输出 `name / spellId / expirationTime / applications` 各自能不能用：
 
+示例输出（数值仅示意格式，实际以游戏内为准）：
+
 ```
 [Cyber Deck] 光环可读性探测 [战斗中]
 [player] 8 条  name 8/8  spellId 8/8  时间 6/8  层数 8/8
   圣印             spell=21084  name=ok     remain=24.3  stack=-
   正义之怒          spell=25780  name=ok     remain=-     stack=-
   party1 减益条数（HARMFUL|RAID）= 2
+[target 怪名 我放的 debuff] 2 条  name 2/2  spellId 2/2  时间 2/2
+  审判             spell=20271  name=ok     remain=8.0
+  十字军圣印        spell=21082  name=ok     remain=12.5
 ```
+
+最后一段走 `HARMFUL|PLAYER`（"我施加的 debuff"专用 filter），
+和玩家自身 buff 的 `HELPFUL` 是两条独立通道。`getTargetDispelType()` 一直在用这条路径，
+所以它至少能拿到**数量和驱散类型**；名字和剩余时间在战斗中是否也被保护，跑一次看这一段的
+`name x/y` 与 `时间 x/y` 即可确认。
 
 判断依据：
 

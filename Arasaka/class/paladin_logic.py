@@ -330,11 +330,10 @@ def run_paladin_logic(state_dict, spec_name):
             action_hotkey = get_hotkey(0, "虔诚光环")
         # 战斗循环
         elif 战斗 and _is_enemy(目标类型):
-            # 圣印：常驻 30 秒。施放成功由插件记 30 秒（core/auras.lua），
-            # 到期后 UpdateForeverAuras 会把 20 号编号归 0，所以这里只看"编号对不对"。
-            # 2 秒防抖只是盖住像素刷新的那一两个 tick，不是额外的时间闸。
-            if (想要圣印 is not None and 当前圣印 != 想要圣印 and not 正在读条
-                    and _upkeep_ok("圣印", 2.0)):
+            # 圣印：常驻 30 秒。施放成功事件里 spellID 可读（实测确认），
+            # 所以 auras 计时、20 号编号、198 号剩余在战斗中都是准的 —— 只看"编号对不对"。
+            # 不设防抖：编号一更新条件就不成立；万一像素滞后多按一次，游戏 GCD 也会挡掉。
+            if 想要圣印 is not None and 当前圣印 != 想要圣印 and not 正在读条:
                 seal_name = SEAL_SPELLS[想要圣印]
                 current_step = f"换 {seal_name}"
                 action_hotkey = get_hotkey(0, seal_name)
@@ -342,14 +341,14 @@ def run_paladin_logic(state_dict, spec_name):
             # 持续与 CD 等长：buff 被提前打掉时 CD 还在转，CD 一好就补才能无缝覆盖；
             # 若 buff 因天赋/装备被延长，CD 好了也照补（刷新格挡次数）。
             # 没学会时 CD 像素是 255，条件不成立，不会空按。
-            elif 神圣之盾CD == 0:
+            elif 神圣之盾CD == 0 and 五码敌人 >= 1:
                 current_step = "补 神圣之盾"
                 action_hotkey = get_hotkey(0, "神圣之盾")
             elif 审判CD == 0 and _in_melee(目标距离):
                 current_step = "审判"
                 action_hotkey = get_hotkey(0, "审判")
             # 奉献：身边 ≥2 个才放（5 码内敌人数，不是全场人数）
-            elif 奉献CD == 0 and 五码敌人 >= 2 and 能量值 >= 70 and not 移动:
+            elif 奉献CD == 0 and 五码敌人 >= 2 and 能量值 >= 50 and not 移动:
                 current_step = "奉献"
                 action_hotkey = get_hotkey(0, "奉献")
             elif 神圣打击CD == 0 and _in_melee(目标距离, 5):
@@ -367,7 +366,7 @@ def run_paladin_logic(state_dict, spec_name):
         # 战斗中但当前没敌人（目标刚死、战斗未结束）：仍维持圣印，别等下一个目标现挂。
         # 脱战一律不补——非战斗时按键只会干扰操作（打字、坐骑、看背包）。
         elif (战斗 and 想要圣印 is not None and 当前圣印 != 想要圣印
-                and not 正在读条 and _upkeep_ok("圣印", 2.0)):
+                and not 正在读条):
             seal_name = SEAL_SPELLS[想要圣印]
             current_step = f"换 {seal_name}"
             action_hotkey = get_hotkey(0, seal_name)

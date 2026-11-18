@@ -1960,9 +1960,11 @@ function CyberDeck:OnUpdate(elapsed)
     self:updateGroupInRangeAndHealth()
     self:updateAura()
     self:updateTargetAuraCount()
-    -- 2. 低频逻辑（每 0.2 秒执行）
+    -- 2. 低频逻辑（每 0.12 秒执行）
+    -- 技能 CD 走这一档，0.2 秒会让「CD 好了但还没放」多等最多 200ms；
+    -- 降到 0.12 与 Python 侧的 0.1 错开，避免两边同频导致一顿一顿。
     self.timeElapsed = self.timeElapsed + elapsed
-    if self.timeElapsed > 0.2 then
+    if self.timeElapsed > 0.12 then
         self:GetDefensiveAuraDuration()
         self:updateSpellCooldown()
         self:OnUpdateUnitAura()

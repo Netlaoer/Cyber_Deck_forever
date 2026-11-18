@@ -822,6 +822,35 @@ function F:ProbeAuras()
             end
         end
     end
+
+    -- 目标身上「我施加的 debuff」：审判/十字军印记这类全靠这条通道。
+    -- HARMFUL|PLAYER 是"自己放的"专用 filter，secret 保护通常不覆盖它。
+    if UnitExists("target") then
+        local total, okName, okSpell, okTime = 0, 0, 0, 0
+        local lines = {}
+        for i = 1, 40 do
+            local ok, aura = pcall(C_UnitAuras.GetDebuffDataByIndex, "target", i, "HARMFUL|PLAYER")
+            if not ok or type(aura) ~= "table" then break end
+            total = total + 1
+            local name, ns = probe(function() return aura.name end)
+            local sid, ss = probe(function() return aura.spellId end)
+            local exp, es = probe(function() return aura.expirationTime end)
+            if ns == "ok" then okName = okName + 1 end
+            if ss == "ok" then okSpell = okSpell + 1 end
+            if es == "ok" then okTime = okTime + 1 end
+            local remain = "-"
+            if exp then
+                local r = exp - GetTime()
+                remain = (r > 0) and ("%.1f"):format(r) or "0"
+            end
+            lines[#lines + 1] = ("  %-16s spell=%-7s name=%-7s remain=%s"):format(
+                tostring(name or "?"), tostring(sid or "?"), ns, remain)
+        end
+        print(("|cff00ff00[target %s 我放的 debuff]|r %d 条  name %d/%d  spellId %d/%d  时间 %d/%d"):format(
+            tostring(UnitName("target") or "?"), total, okName, total, okSpell, total, okTime, total))
+        for _, line in ipairs(lines) do print(line) end
+    end
+
 end
 
 
