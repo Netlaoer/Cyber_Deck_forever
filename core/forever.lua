@@ -642,29 +642,6 @@ function F:UpdateForeverAutoAttack()
     self:CreatTexture(index, (F.autoAttackOn and 1 or 0) / 255)
 end
 
--- 目标生物类型（UnitCreatureType 第二返回值）：3 恶魔 6 亡灵，用于驱邪术/神圣愤怒
--- 生物类型缓存：副本/战斗中 UnitCreatureType 返回 secret number，
--- 读不到时沿用上次读到的值（选目标一般在非战斗状态，那时能读到并立即刷新）。
-local lastCreatureType = 0
-
-function F:UpdateForeverCreatureType()
-    if not F.isForever then return end
-    local index = self.blocks and self.blocks.state and self.blocks.state["生物类型"]
-    if not index then return end
-    local value = lastCreatureType
-    if UnitExists("target") and UnitCanAttack("player", "target") then
-        local ok, _, id = pcall(UnitCreatureType, "target")
-        -- secret number 的 type() 仍是 "number"，光看类型挡不住，必须用 issecretvalue
-        if ok and type(id) == "number"
-            and not (type(issecretvalue) == "function" and issecretvalue(id)) then
-            value = id
-            lastCreatureType = id
-        end
-    else
-        lastCreatureType = 0
-    end
-    self:CreatTexture(index, value / 255)
-end
 
 -- ================================================================
 --                       调试输出 /cy spec

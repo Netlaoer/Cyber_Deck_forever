@@ -19,6 +19,8 @@ from utils import (
     get_hotkey,
     get_lowest_health_unit,
     get_lowest_health_unit_without_aura,
+    get_unit_with_aura,
+    get_unit_with_role_and_without_aura_name,
     get_unit_with_dispel_type,
 )
 
@@ -41,9 +43,6 @@ CD_UNAVAILABLE = 255
 CLEANSE_TYPES = (1, 3, 4)
 
 # UnitCreatureType 编号：驱邪术/神圣愤怒 只对亡灵和恶魔
-CREATURE_DEMON = 3
-CREATURE_UNDEAD = 6
-UNDEAD_DEMON = (CREATURE_DEMON, CREATURE_UNDEAD)
 
 # 20 号像素的圣印编号 -> 技能名（69-75 号像素用来判断“学会没学会”）
 SEAL_SPELLS = {
@@ -199,8 +198,6 @@ def run_paladin_logic(state_dict, spec_name):
     spells = state_dict.get("spells") or {}
 
     # 注意：4 号「有效性」（死亡 / 坐骑 / 打字 / 吃喝）由调度层统一判断——
-    # logic_gui_Tools.py:_run_logic_loop 在调用本函数**之前**已经 `if not sd.get("有效性"): continue`，
-    # 对全部 13 个职业生效。这里不再重复判断，避免两处逻辑漂移。
 
     # ==================== 公共状态 ====================
     战斗 = bool(state_dict.get("战斗", False))
@@ -214,30 +211,21 @@ def run_paladin_logic(state_dict, spec_name):
     目标生命值 = _int(state_dict, "目标生命值")
     目标施法 = _int(state_dict, "目标施法")
     敌人人数 = _int(state_dict, "敌人人数")
-    # 48 号：姓名版里距离 ≤5 码且处于战斗的敌人数量。
-    # 奉献是地面 AoE（半径 8 码左右），判断该不该放要看身边有几个，不是全场有几个。
     五码敌人 = _int(state_dict, "5码敌人")
     爆发 = _int(state_dict, "爆发开关")
     延迟 = _int(state_dict, "延迟")
     驱散开关 = _int(state_dict, "驱散开关", 1)
     当前圣印 = _int(state_dict, "圣印")
-    # 198 号：当前圣印剩余秒（auras 施放计时）；0 = 没挂 / 已到期 / 读不到
     圣印剩余 = _int(state_dict, "圣印剩余")
 
     神恩术 = _int(state_dict, "神恩术")
     圣光灌注 = _int(state_dict, "圣光灌注")
     正义之怒 = _int(state_dict, "正义之怒")
-    生物类型 = _int(state_dict, "生物类型")
     虔诚光环 = _int(state_dict, "虔诚光环")
 
     圣疗术CD = _cd(spells, "圣疗术")
     圣盾术CD = _cd(spells, "圣盾术")
-    # ---- 正式服专有资源/技能（无限服没有）----
-    # 分支是从正式服搬来的，会引用这些名字。这里统一给"无/不可用"的默认值，
-    # 让相关分支自然失效：不会 NameError，也不会因为默认值误命中。
-    # 适配时可以直接把这些分支删掉，变量也就不需要了。
-    神圣能量 = state_dict.get("神圣能量", 0)        # 正式服的圣能（无限服没有，恒 0）
-    圣光灌注BUFF = state_dict.get("圣光灌注", 0)    # 无限服有 26 号像素，能用
+    圣光灌注BUFF = state_dict.get("圣光灌注", 0) 
     神性层数BUFF = state_dict.get("神性层数", 0)
     神圣意志BUFF = state_dict.get("神圣意志", 0)
     美德道标BUFF = state_dict.get("美德道标", 0)
@@ -257,8 +245,6 @@ def run_paladin_logic(state_dict, spec_name):
     法术失败 = 0
     清洁术CD = _cd(spells, "清洁术")
 
-    圣光术CD = _cd(spells, "圣光术")
-    圣光闪现CD = _cd(spells, "圣光闪现")
     神圣震击CD = _cd(spells, "神圣震击")
     审判CD = _cd(spells, "审判")
     奉献CD = _cd(spells, "奉献")
@@ -288,10 +274,7 @@ def run_paladin_logic(state_dict, spec_name):
         return None, current_step, unit_info
 
     # ==================== 神圣（搬自正式服，待适配）====================
-    # 下面是正式服 Cyber_Deck 的神圣分支原文，含神圣能量 / 美德道标 / 圣洁鸣钟 /
-    # 永恒之火 / 荣耀圣令 / 黎明之光 / 神圣棱镜 / 光环掌握等正式服内容。
-    # 无限服没有这些技能与资源：相关分支因为 spells.get(..., -1) / state_dict.get(..., 0)
-    # 会自动跳过（不报错、也不命中）。适配时按需删掉或换成 60 级的做法。
+    # 会自动跳过（不报错、也不命中）。60级再适配。
     if spec_name == "神圣":
         # Holy选中友方/无目标(战斗中有焦点)时，临时改为进攻目标类型
         # 无目标但在战斗中：审判/震击宏已指向[@focustarget]，自动打焦点目标
@@ -373,8 +356,18 @@ def run_paladin_logic(state_dict, spec_name):
                 action_hotkey = get_hotkey(_solo_unit(state_dict, 1), "圣疗术")
             # ---- 优先级 2: 常规 ----
             elif 战斗 :
+                # 圣光守望
+                守望单位, _ = get_unit_with_aura(state_dict, "圣光守望")
+                # 圣光誓约：坦克身上没有就补（5 分钟长 buff，只挂一个）
+                誓约单位, _ = get_unit_with_role_and_without_aura_name(state_dict, 1, "圣光誓约")
+                if 守望单位 is not None and 神圣震击CD == 0 and not 施法:
+                    current_step = f"圣光守望 震击 -> {守望单位}"
+                    action_hotkey = get_hotkey(int(守望单位), "神圣震击")
+                elif 誓约单位 is not None and not 施法:
+                    current_step = f"圣光誓约 -> {誓约单位}"
+                    action_hotkey = get_hotkey(int(誓约单位), "圣光誓约")
                 # 圣光术站桩
-                if not 施法 and not 移动 and 最低生命值 < 60:
+                elif not 施法 and not 移动 and 最低生命值 < 60:
                     current_step = "站桩 圣光术"
                     action_hotkey = get_hotkey(_solo_unit(state_dict, 最低单位), "圣光术")
                 # 群抬
@@ -457,7 +450,8 @@ def run_paladin_logic(state_dict, spec_name):
             elif 神圣打击CD == 0 and _in_melee(目标距离, 5):
                 current_step = "神圣打击"
                 action_hotkey = get_hotkey(0, "神圣打击")
-            elif 生物类型 in UNDEAD_DEMON and 敌人人数 >= 2 and 神圣愤怒CD == 0:
+            # 神圣愤怒：对非亡灵/恶魔游戏会自己拒绝，不再预判目标类型
+            elif 敌人人数 >= 2 and 神圣愤怒CD == 0:
                 current_step = "神圣愤怒（亡灵/恶魔）"
                 action_hotkey = get_hotkey(0, "神圣愤怒")
             # 兜底起手：必须最后。放最前面会让后面全部 elif 被挡死——
@@ -488,7 +482,7 @@ def run_paladin_logic(state_dict, spec_name):
         # 圣印是常驻 buff（30 秒），战斗内外都要维持
         想要圣印 = _ret_seal(spells, 能量值)
 
-        if not 正在读条 and not 移动 and 0 < 生命值 < 45 and 能量值 >= 35 and 圣光闪现CD == 0:
+        if not 正在读条 and not 移动 and 0 < 生命值 < 45 and 能量值 >= 35:
             current_step = f"自疗 圣光闪现 ({生命值}%)"
             # 用 unit 1：宏体自带 [nogroup,@player]，单人时会自动落到自己
             action_hotkey = get_hotkey(_solo_unit(state_dict, 1), "圣光闪现")
@@ -511,7 +505,8 @@ def run_paladin_logic(state_dict, spec_name):
             elif 神圣打击CD == 0 and _in_melee(目标距离, 5):
                 current_step = "神圣打击"
                 action_hotkey = get_hotkey(0, "神圣打击")
-            elif 生物类型 in UNDEAD_DEMON and 驱邪术CD == 0 and _in_melee(目标距离, 30):
+            # 驱邪术：同上，交给游戏判断
+            elif 驱邪术CD == 0 and _in_melee(目标距离, 30):
                 current_step = "驱邪术（亡灵/恶魔）"
                 action_hotkey = get_hotkey(0, "驱邪术")
             # 奉献：身边 ≥2 个才放（5 码内敌人数，不是全场人数）

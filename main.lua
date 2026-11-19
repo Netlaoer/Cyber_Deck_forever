@@ -2001,7 +2001,6 @@ function CyberDeck:OnUpdate(elapsed)
         self:updateEnemyCount()
         self:updateItemCoolDown()
         self:UpdateForeverAuras()
-        self:UpdateForeverCreatureType()
         self:UpdateForeverAutoAttack()
         self.timeElapsed = 0
     end
