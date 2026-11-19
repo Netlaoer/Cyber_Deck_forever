@@ -63,7 +63,10 @@ function CyberDeck:CreateMacro(dynamicData, staticData, specialData)
             if spell then
                 local raidIdx = ((i - 1) % 30) + 1
                 if raidIdx == 1 then
-                    macroBody = format("/cast [group:raid,@raid1]%s;[group:party,@player]%s;[nogroup,@player]%s", spell,
+                    -- 无限服是 1.12 核心（GetBuildInfo 返回 1.60.1 / 16001），
+                    -- [nogroup] 是 5.0.4 才引入的条件，这里不认，会整段失效。
+                    -- 改用无组队条件的 [@player] 作兜底：团队/小队先匹配，其余落到自己。
+                    macroBody = format("/cast [group:raid,@raid1]%s;[group:party,@player]%s;[@player]%s", spell,
                         spell,
                         spell)
                 elseif raidIdx <= 5 then
@@ -104,7 +107,9 @@ function CyberDeck:PrintMacroDebug()
         self:Print("|cffff0000一个都没建|r —— 载入时应该在战斗中，脱战后 /reload 一次")
         return
     end
-    local probe = { { 1, "圣光术 unit1" }, { 2, "圣光术 unit2" }, { 151, "审判(静态1)" } }
+    -- 探针：1/2 是动态宏（圣光术 unit1/unit2），最后一个静态槽是 /startattack
+    -- （213 = 6 动态×30 + 32 静态 + 1，即 CTRL-SHIFT-F3）
+    local probe = { { 1, "圣光术 unit1" }, { 2, "圣光术 unit2" }, { 213, "开始攻击" } }
     for _, item in ipairs(probe) do
         local idx, label = item[1], item[2]
         local name = "s" .. idx

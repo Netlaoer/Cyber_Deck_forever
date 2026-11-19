@@ -453,7 +453,6 @@ local SEEN_GRACE = 1.5   -- 只兜住单帧读不到；再长就会让“buff �
 -- 有了这个就不会把已经开好的光环/正义之怒当成没开，从而反复重开（一开一关）
 local AURA_LOCK_SECONDS = {
     ["正义之怒"] = 1700,   -- 30 分钟 buff，留 100 秒余量
-    ["虔诚光环"] = 7200,   -- 永久光环（无到期时间），给个足够长的保险期
 }
 local auraLockUntil = {}
 local auraSpellName = {}
@@ -508,8 +507,7 @@ end
 function F:UpdateForeverAuras()
     if not F.isForever or not self.blocks or not self.blocks.state then return end
     local st = self.blocks.state
-    if not (st["圣印"] or st["神恩术"] or st["圣光灌注"] or st["正义之怒"]
-        or st["虔诚光环"]) then
+    if not (st["圣印"] or st["神恩术"] or st["圣光灌注"] or st["正义之怒"]) then
         return
     end
 
@@ -600,12 +598,6 @@ function F:UpdateForeverAuras()
     if st["正义之怒"] then
         -- 常驻 buff：0 = 没有，>0 = 有；同样只判存在性，避免永久 buff 被误判成“没有”
         self:CreatTexture(st["正义之怒"], stillThere("正义之怒") and 1 or 0)
-    end
-
-    if st["虔诚光环"] then
-        -- 只判“有没有”：光环时长可能被私服改成永久（expirationTime = 0），
-        -- 用剩余秒数会把永久光环误判成“没挂”，导致一直重复补
-        self:CreatTexture(st["虔诚光环"], stillThere("虔诚光环") and 1 or 0)
     end
 
 end

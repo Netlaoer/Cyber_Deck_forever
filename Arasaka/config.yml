@@ -85,7 +85,7 @@ state:
 2: # 圣骑士（无限服 1.60.1）
   keymap: "paladin.yml"
   # GUI 增益分区名单（class 级，旧版 exe 不会读到，决策层也不受影响）
-  buff_fields: [虔诚光环, 圣印, 圣印剩余, 神恩术, 圣光灌注, 正义之怒]
+  buff_fields: [圣印, 圣印剩余, 神恩术, 圣光灌注, 正义之怒]
   # 探测块：无冷却、只用于判断“是否学会”（0=已学 255=未学），不进技能冷却区。
   # 注意：神圣之盾CD / 神恩术CD 是**真冷却**（10 秒 / 2 分钟），不能放进来
   probe_fields: [正义圣印, 命令圣印, 十字军圣印, 光明圣印, 智慧圣印, 愤怒圣印, 公正圣印, 正义之怒CD]
@@ -100,7 +100,6 @@ state:
     驱散开关: {step: 40, type: "int" }
     5码敌人: {step: 41, type: "int" }
     目标施法: {step: 47, type: "int" }
-    虔诚光环: {step: 11, type: "int" }
     圣印: {step: 18, type: "int" }
     圣印剩余: {step: 208, type: "int" }
     自动攻击: {step: 22, type: "int" }
@@ -149,7 +148,6 @@ state:
     驱散开关: {step: 40, type: "int" }
     5码敌人: {step: 41, type: "int" }
     目标施法: {step: 47, type: "int" }
-    虔诚光环: {step: 11, type: "int" }
     圣印: {step: 18, type: "int" }
     圣印剩余: {step: 208, type: "int" }
     自动攻击: {step: 22, type: "int" }
@@ -196,7 +194,6 @@ state:
     驱散开关: {step: 40, type: "int" }
     5码敌人: {step: 41, type: "int" }
     目标施法: {step: 47, type: "int" }
-    虔诚光环: {step: 11, type: "int" }
     圣印: {step: 18, type: "int" }
     圣印剩余: {step: 208, type: "int" }
     自动攻击: {step: 22, type: "int" }

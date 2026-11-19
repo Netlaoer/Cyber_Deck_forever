@@ -214,8 +214,4 @@
 210: {unit: 0, 技能: "王者祝福", 热键: "CTRL-SHIFT-NUMPADDIVIDE"}
 211: {unit: 0, 技能: "智慧祝福", 热键: "CTRL-SHIFT-F1"}
 212: {unit: 0, 技能: "力量祝福", 热键: "CTRL-SHIFT-F2"}
-213: {unit: 0, 技能: "虔诚光环", 热键: "CTRL-SHIFT-F3"}
-214: {unit: 0, 技能: "圣光闪现", 热键: "CTRL-SHIFT-F5"}
-215: {unit: 0, 技能: "圣光术", 热键: "CTRL-SHIFT-F6"}
-216: {unit: 0, 技能: "神圣震击", 热键: "CTRL-SHIFT-F7"}
-217: {unit: 0, 技能: "开始攻击", 热键: "CTRL-SHIFT-F8"}
+213: {unit: 0, 技能: "开始攻击", 热键: "CTRL-SHIFT-F3"}

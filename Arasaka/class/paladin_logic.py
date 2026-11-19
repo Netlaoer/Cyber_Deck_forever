@@ -126,24 +126,6 @@ def _prot_seal(spells, mana, current_seal=None, seal_remaining=0):
     return _first_known_seal(spells, (SEAL_FURY, SEAL_JUSTICE, SEAL_WISDOM))
 
 
-def _solo_unit(state_dict, unit):
-    """单人时切到 @player 宏。
-
-    无限服的自定义核心对动态宏里的 [nogroup,@player] 不生效（实测：单人按 unit1
-    的圣光术宏毫无反应，而 `/cast 审判` 这种无条件的静态宏正常），所以单人必须
-    用独立的 [@player]xxx 宏，不能依赖宏体的条件回退。
-    """
-    group = state_dict.get("group") or {}
-    seen = 0
-    for i in range(1, 31):
-        g = group.get(str(i)) or {}
-        if g.get("生命值", 0) > 0:
-            seen += 1
-            if seen > 1:
-                return int(unit)
-    return 0
-
-
 def _ret_seal(spells, mana):
     if mana >= 25:
         return _first_known_seal(spells, (SEAL_COMMAND, SEAL_JUSTICE))
@@ -152,7 +134,7 @@ def _ret_seal(spells, mana):
 
 # 维持类技能节流：buff 名称万一和客户端不一致，也不会每个 tick 重按
 # 圣印不节流：它只受 GCD 限制，换完由 20 号像素确认，不必再叠一层计时
-_UPKEEP_INTERVAL = {"正义之怒": 2.0, "虔诚光环": 2.0}
+_UPKEEP_INTERVAL = {"正义之怒": 2.0}
 _last_upkeep = {}
 
 
@@ -221,7 +203,6 @@ def run_paladin_logic(state_dict, spec_name):
     神恩术 = _int(state_dict, "神恩术")
     圣光灌注 = _int(state_dict, "圣光灌注")
     正义之怒 = _int(state_dict, "正义之怒")
-    虔诚光环 = _int(state_dict, "虔诚光环")
 
     圣疗术CD = _cd(spells, "圣疗术")
     圣盾术CD = _cd(spells, "圣盾术")
@@ -349,11 +330,11 @@ def run_paladin_logic(state_dict, spec_name):
             # 圣盾术
             if 圣盾术CD == 0 and 生命值 < 15:
                 current_step = "施放 圣盾术"
-                action_hotkey = get_hotkey(_solo_unit(state_dict, 1), "圣盾术")
+                action_hotkey = get_hotkey(1, "圣盾术")
             # 圣疗术
             elif 圣疗术CD == 0 and 圣盾术CD > 0 and 生命值 < 15:
                 current_step = "施法 圣疗术"
-                action_hotkey = get_hotkey(_solo_unit(state_dict, 1), "圣疗术")
+                action_hotkey = get_hotkey(1, "圣疗术")
             # ---- 优先级 2: 常规 ----
             elif 战斗 :
                 # 圣光守望
@@ -369,7 +350,7 @@ def run_paladin_logic(state_dict, spec_name):
                 # 圣光术站桩
                 elif not 施法 and not 移动 and 最低生命值 < 60:
                     current_step = "站桩 圣光术"
-                    action_hotkey = get_hotkey(_solo_unit(state_dict, 最低单位), "圣光术")
+                    action_hotkey = get_hotkey(int(最低单位), "圣光术")
                 # 群抬
                 elif 圣光守望CD == 0 and 神圣震击CD <= 2 and not 移动 and HP75 >= 3:
                     current_step = "群奶 圣光守望"
@@ -377,11 +358,11 @@ def run_paladin_logic(state_dict, spec_name):
                 # 圣光闪现
                 elif not 施法 and not 移动 and 最低生命值 <= 90:
                     current_step = "圣光闪现"
-                    action_hotkey = get_hotkey(_solo_unit(state_dict, 最低单位), "圣光闪现")
+                    action_hotkey = get_hotkey(int(最低单位), "圣光闪现")
                 # 神圣震击
                 elif 神圣震击CD == 0 and not 施法 and 最低生命值 < 95:
                     current_step = "施放 神圣震击"
-                    action_hotkey = get_hotkey(_solo_unit(state_dict, 最低单位), "神圣震击")
+                    action_hotkey = get_hotkey(int(最低单位), "神圣震击")
  
             # ---- 优先级 3: 进攻 ----
             if current_step == "无匹配技能" and 战斗 and not 施法 and 1 <= 目标类型 <= 3:
@@ -420,10 +401,6 @@ def run_paladin_logic(state_dict, spec_name):
         elif 正义之怒 == 0 and 正义之怒CD == 0 and _upkeep_ok("正义之怒"):
             current_step = "补 正义之怒"
             action_hotkey = get_hotkey(0, "正义之怒")
-        # 虔诚光环：常驻，断了就补
-        elif 虔诚光环 == 0 and _upkeep_ok("虔诚光环"):
-            current_step = "补 虔诚光环"
-            action_hotkey = get_hotkey(0, "虔诚光环")
         # 战斗循环
         elif 战斗 and _is_enemy(目标类型):
             # 圣印：常驻 30 秒。施放成功事件里 spellID 可读（实测确认），
@@ -485,7 +462,7 @@ def run_paladin_logic(state_dict, spec_name):
         if not 正在读条 and not 移动 and 0 < 生命值 < 45 and 能量值 >= 35:
             current_step = f"自疗 圣光闪现 ({生命值}%)"
             # 用 unit 1：宏体自带 [nogroup,@player]，单人时会自动落到自己
-            action_hotkey = get_hotkey(_solo_unit(state_dict, 1), "圣光闪现")
+            action_hotkey = get_hotkey(1, "圣光闪现")
         elif 目标施法 > 0 and 制裁之锤CD == 0:
             current_step = "制裁之锤 打断"
             action_hotkey = get_hotkey(0, "制裁之锤")

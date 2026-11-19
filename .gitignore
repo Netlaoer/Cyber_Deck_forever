@@ -7,10 +7,10 @@ dist/
 *.spec
 .venv/
 venv/
-pack/
 
-# ── 可执行文件（exe 可由 pack/打包exe.py 生成，upx 需自行下载）──
-logic_gui_Tools.py
+# ── 打包产物（可由 pack/打包exe.py 重新生成）─────────────
+*.exe
+pack/upx.exe
 
 # ── 每台机器不同的本地状态 ─────────────────────────────
 gui_window_state.json
@@ -20,5 +20,4 @@ gui_window_state.json
 .idea/
 .claude/
 
-# ── 逆向分析记录（不随插件分发）────────────────────────
-恢复报告.md
+logic_gui_Tools.py

@@ -16,7 +16,6 @@ local addon, ns = ...
     索引表（1-19 与全局 state 一致，20 起为圣骑士专属；43/61/64 留空）：
     43 正义之锤 / 61 圣光守望 / 64 圣光誓约 是正式服(WLK/11.x)技能，无限服没有，
     直接留空而不前移索引，避免 config.yml 与 keymap 的 step/宏位整体错位
-      13 虔诚光环剩余（借用全局“一键辅助”位，无限服没有一键辅助）
       20 圣印(1正义 2命令 3十字军 4光明 5智慧 6愤怒 7公正)
       21 施法技能  22 施法目标  23 目标距离
       24 自动攻击（PLAYER_ENTER_COMBAT / PLAYER_LEAVE_COMBAT，1=平砍中）
@@ -49,7 +48,6 @@ local function buildBlocks(groupNum, groupAuras)
         [8] = { type = "block", name = "引导" },
         [9] = { type = "block", name = "生命值" },
         [10] = { type = "block", name = "能量值" },
-        [11] = { type = "block", name = "虔诚光环" },
         [12] = { type = "block", name = "法术失败" },
         [13] = { type = "block", name = "目标类型" },
         [14] = { type = "block", name = "队伍类型" },
@@ -145,7 +143,7 @@ CyberDeck.MacrosList = {
     -- /startattack 不占 GCD，[harm,nodead] 保证对无效目标不产生红字报错。
     specialSpells = {
         -- special 与 static 同槽位时 special 优先
-        [37] = "/startattack [harm,nodead]",
+        [33] = "/startattack [harm,nodead]",
     },
     staticSpells = {
         [1] = "审判",
@@ -180,9 +178,5 @@ CyberDeck.MacrosList = {
         [30] = "王者祝福",
         [31] = "智慧祝福",
         [32] = "力量祝福",
-        [33] = "虔诚光环",
-        [34] = "[@player]圣光闪现",
-        [35] = "[@player]圣光术",
-        [36] = "[@player]神圣震击",
     },
 }
