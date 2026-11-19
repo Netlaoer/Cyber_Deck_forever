@@ -14,8 +14,6 @@ local addon, ns = ...
        65-68 状态；69-75 圣印探测；76-196 队伍块；200-211 符文技能。
 
     索引表（1-19 与全局 state 一致，20 起为圣骑士专属；43/61/64 留空）：
-    43 正义之锤 / 61 圣光守望 / 64 圣光誓约 是正式服(WLK/11.x)技能，无限服没有，
-    直接留空而不前移索引，避免 config.yml 与 keymap 的 step/宏位整体错位
       20 圣印(1正义 2命令 3十字军 4光明 5智慧 6愤怒 7公正)
       21 施法技能  22 施法目标  23 目标距离
       24 自动攻击（PLAYER_ENTER_COMBAT / PLAYER_LEAVE_COMBAT，1=平砍中）
@@ -86,7 +84,6 @@ local function buildBlocks(groupNum, groupAuras)
         [43] = { type = "spell", name = "正义之怒" },
         [44] = { type = "spell", name = "圣光术" },
         [45] = { type = "spell", name = "圣光闪现" },
-        -- [61] 圣光守望 / [64] 圣光誓约：正式服（11.x）技能，无限服不存在
 
         [46] = { type = "block", name = "正义之怒" },
         [47] = { type = "block", name = "目标施法" },
@@ -138,7 +135,7 @@ CyberDeck.ClassBlocks = {
 CyberDeck.MacrosList = {
     -- 圣光誓约必须能挂队友，只能走动态宏（@raidN）。这会把动态位从 150 涨到 180，
     -- 静态技能整体后移 30 格，动作条需要重摆一次。
-    dynamicSpells = { "圣光术", "圣光闪现", "神圣震击", "清洁术", "圣疗术", "圣光誓约" },
+    dynamicSpells = { "圣光术", "圣光闪现", "神圣震击", "清洁术", "圣疗术", "圣光誓约", "圣光守望" },
     -- specialSpells 里是**完整宏体**（不拼 /cast），与 staticSpells 同位置时优先。
     -- /startattack 不占 GCD，[harm,nodead] 保证对无效目标不产生红字报错。
     specialSpells = {
@@ -178,5 +175,7 @@ CyberDeck.MacrosList = {
         [30] = "王者祝福",
         [31] = "智慧祝福",
         [32] = "力量祝福",
+        -- 清洁术的"对目标/鼠标指向"版本（动态宏只覆盖 @raid1~30）
+        [34] = "[@mouseover]清洁术",
     },
 }

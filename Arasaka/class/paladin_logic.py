@@ -1,15 +1,5 @@
 # -*- coding: utf-8 -*-
 """圣骑士决策（魔兽世界无限服 1.60.1，60 级经典技能组 + 天赋树）。
-
-与正式服版的差别（对应 class/Paladin.lua 的像素索引）：
-- 没有神圣能量 / 圣洁鸣钟 / 圣洁武器 / 英雄天赋 / 一键辅助，相关分支全部删掉；
-- 资源是法力（能量值 = 法力百分比），核心是「圣印 + 审判 + 省蓝」；
-- 圣印用 20 号像素编码：1 正义 2 命令 3 十字军 4 光明 5 智慧 6 愤怒 7 公正；
-- 神恩术(25) / 圣光灌注(26) / 正义之怒(65) / 目标施法(66) 由 core/forever.lua 扫描写入；
-  神圣之盾只看 神圣之盾CD(67)（卡 CD 补，与审判一致）——buff 是 secret 值，不再采集；
-- 技能冷却来自 spells：0 = 就绪，1~254 = 剩余秒，255 = 不可用（没学会或未解析到）。
-
-冷却值一律用 255 作为缺省：宁可不动，也不对没学会的技能瞎按键。
 """
 
 import time
@@ -18,7 +8,6 @@ from utils import (
     count_units_below_health,
     get_hotkey,
     get_lowest_health_unit,
-    get_lowest_health_unit_without_aura,
     get_unit_with_aura,
     get_unit_with_role_and_without_aura_name,
     get_unit_with_dispel_type,
@@ -74,17 +63,10 @@ def _int(state, key, default=0):
 
 
 def _seal_known(spells, seal):
-    """69-75 号探测块：255 = 没学会。"""
     return _cd(spells, SEAL_SPELLS[seal]) != CD_UNAVAILABLE
 
 
 def _first_known_seal(spells, order):
-    """按顺序取第一个已学会的圣印。
-
-    69-75 号探测块有任何一项没被客户端写上（停在 255）就会让整条链返回 None，
-    此时圣印永远不换、身上一直残留旧的那个（典型现象：防护骑一直挂光明圣印）。
-    所以探测全部落空时退回顺序里的第一个候选，宁可空按一次也别让圣印卡死。
-    """
     for seal in order:
         if _seal_known(spells, seal):
             return seal
@@ -103,16 +85,6 @@ SEAL_DURATION = 30.0
 # auras 的计时建不起来 → 198 号剩余恒 0；此时用这个时刻推算还剩多久。
 _wisdom_cast_at = {"t": time.time()}   # 以模块加载时刻为起点：重载后正挂着智慧也不会被误判到期
 def _prot_seal(spells, mana, current_seal=None, seal_remaining=0):
-    """防护圣印：
-
-    - 法力 < 50%：**立即**换智慧回蓝，不管当前圣印还剩多久。
-    - 法力 ≥ 50% 且正挂着智慧、buff 还没到期：**保持不动**，让它把剩余时间跑完，
-      下次到期再换回愤怒——中途取消等于白丢一个 GCD + 一份回蓝。
-    - 其余情况：换回愤怒（→ 正义 → 智慧）。
-
-    剩余时间优先用 198 号像素（auras 计时）；读不到（0）时退回本地估算，
-    否则战斗中刚换的智慧会被误判"已到期"立刻换回去。
-    """
     now = time.time()
     if mana < SEAL_WISDOM_LOW:
         _wisdom_cast_at["t"] = now
@@ -132,8 +104,21 @@ def _ret_seal(spells, mana):
     return _first_known_seal(spells, (SEAL_WISDOM, SEAL_JUSTICE))
 
 
-# 维持类技能节流：buff 名称万一和客户端不一致，也不会每个 tick 重按
-# 圣印不节流：它只受 GCD 限制，换完由 20 号像素确认，不必再叠一层计时
+failed_spell_map = {
+    3: "自由祝福",
+    4: "制裁之锤",
+    6: "圣盾术",
+}
+
+
+def _get_failed_spell(state_dict):
+    spell_name = failed_spell_map.get(state_dict.get("法术失败", 0))
+    if not spell_name:
+        return None
+    spells = state_dict.get("spells") or {}
+    return spell_name if spells.get(spell_name, 0) == 0 else None
+
+
 _UPKEEP_INTERVAL = {"正义之怒": 2.0}
 _last_upkeep = {}
 
@@ -154,9 +139,6 @@ def _is_enemy(目标类型):
         0      = 无目标 / 超出射程 / 目标已死
         1~10   = 敌对（1 = 身上没有可驱散光环；2~10 = 有，颜色曲线细分）
         11~20  = 友善（11 为基线，12~20 = 有可驱散光环）
-
-    早期写成 `== 1`，导致「身上带可驱散 buff 的敌人」被判成非敌人，
-    防护/惩戒整条战斗链都不走（表现为某些怪一个技能都不放）。
     """
     return 1 <= 目标类型 <= 10
 
@@ -179,7 +161,7 @@ def _pick_dispel_unit(state_dict, 驱散开关):
 def run_paladin_logic(state_dict, spec_name):
     spells = state_dict.get("spells") or {}
 
-    # 注意：4 号「有效性」（死亡 / 坐骑 / 打字 / 吃喝）由调度层统一判断——
+    # 注意：「有效性」（死亡 / 坐骑 / 打字 / 吃喝）由调度层统一判断——
 
     # ==================== 公共状态 ====================
     战斗 = bool(state_dict.get("战斗", False))
@@ -222,8 +204,8 @@ def run_paladin_logic(state_dict, spec_name):
     首领战 = 0              # 正式服读 C_Scenario 的副本进度，无限服暂无来源
     need_dispel_bosses = ()  # 正式服白名单：这些 Boss 必须驱散
     no_dispel_bosses = ()    # 正式服黑名单：这些 Boss 不驱散
-    失败法术 = 0             # _get_failed_spell 的结果，正式服用来防连点同一个失败技能
-    法术失败 = 0
+    法术失败 = _int(state_dict, "法术失败")   # 12 号像素，0 = 没失败
+    失败法术 = _get_failed_spell(state_dict)
     清洁术CD = _cd(spells, "清洁术")
 
     神圣震击CD = _cd(spells, "神圣震击")
@@ -234,7 +216,6 @@ def run_paladin_logic(state_dict, spec_name):
     制裁之锤CD = _cd(spells, "制裁之锤")
     神恩术CD = _cd(spells, "神恩术CD")
     神圣之盾CD = _cd(spells, "神圣之盾CD")
-    # 24 号像素：1 = 正在近战平砍，0 = 没有（PLAYER_ENTER_COMBAT / LEAVE_COMBAT）
     自动攻击 = _int(state_dict, "自动攻击")
     正义之怒CD = _cd(spells, "正义之怒CD")
     驱邪术CD = _cd(spells, "驱邪术")
@@ -257,24 +238,16 @@ def run_paladin_logic(state_dict, spec_name):
     # ==================== 神圣（搬自正式服，待适配）====================
     # 会自动跳过（不报错、也不命中）。60级再适配。
     if spec_name == "神圣":
-        # Holy选中友方/无目标(战斗中有焦点)时，临时改为进攻目标类型
-        # 无目标但在战斗中：审判/震击宏已指向[@focustarget]，自动打焦点目标
-        if orig_目标类型 >= 11 or (orig_目标类型 == 0 and 战斗):
+        # 选中友方（11~20）时临时当作敌对，让进攻块照常执行。
+        # 正式服这里还处理了"无目标但战斗中有焦点"，靠的是 @focustarget 宏；
+        # 无限服的审判/震击是纯 /cast，无目标就会空按，所以不伪造 0 的情况。
+        if 11 <= orig_目标类型 <= 20:
             state_dict["目标类型"] = 2
             目标类型 = 2
-        # 5豆且有5码内敌人时，伪造目标距离让正义盾击条件通过
-        if state_dict.get("神圣能量", 0) == 5 and state_dict.get("5码敌人", 0) >= 1:
-            state_dict["目标距离"] = 1
-            目标距离 = 1
-        dispel_unit_magic, _ = get_unit_with_dispel_type(state_dict, 1)
-        dispel_unit_disease, _ = get_unit_with_dispel_type(state_dict, 3)
-        dispel_unit_poison, _ = get_unit_with_dispel_type(state_dict, 4)
+
         最低单位_orig, 最低生命值_orig = get_lowest_health_unit(state_dict, 100)
-        无火最低_orig, 无火最低血量_orig = get_lowest_health_unit_without_aura(state_dict, "永恒之火", health_threshold=101)
         最低单位 = 最低单位_orig or "0"
         最低生命值 = 最低生命值_orig or 100
-        无火最低 = 无火最低_orig or "0"
-        无火最低血量 = 无火最低血量_orig or 101
         HP90 = count_units_below_health(state_dict, 90)
         HP80 = count_units_below_health(state_dict, 80)
         HP75 = count_units_below_health(state_dict, 75)
@@ -283,25 +256,15 @@ def run_paladin_logic(state_dict, spec_name):
         unit_info = {
             "最低单位": 最低单位_orig,
             "最低生命值": 最低生命值_orig,
-            "无火最低": 无火最低_orig,
-            "无火最低血量": 无火最低血量_orig,
             "HP<90%人数": HP90,
             "HP<80%人数": HP80,
             "HP<75%人数": HP75,
             "HP<60%人数": HP60,
         }
 
-        # 驱散优先级：魔法 > 疾病 > 毒素
-        驱散单位 = None
-        if dispel_unit_magic is not None:
-            if 队伍类型 == 46 and 首领战 not in no_dispel_bosses:
-                驱散单位 = dispel_unit_magic
-            elif 队伍类型 <= 40 and 首领战 in need_dispel_bosses:
-                驱散单位 = dispel_unit_magic
-        if 驱散单位 is None:
-            驱散单位 = dispel_unit_disease
-        if 驱散单位 is None:
-            驱散单位 = dispel_unit_poison
+        # 驱散优先级：魔法 > 疾病 > 中毒，受 /cy dispel 开关控制
+        # （原来这里手写了一遍，绕过了 驱散开关，导致关掉开关照样驱散）
+        驱散单位 = _pick_dispel_unit(state_dict, 驱散开关)
 
         # ---- 优先级 0: 引导中 ----
         if 引导 > 0 or 延迟 > 0:
@@ -313,12 +276,14 @@ def run_paladin_logic(state_dict, spec_name):
             action_hotkey = get_hotkey(0, 失败法术)
 
         # ---- 优先级 2: 驱散 ----
+        # 队伍成员走动态宏（@raidN）；当前目标/鼠标指向走静态 unit 0 宏
+        # （[@mouseover]清洁术，清洁术是瞬发无 CD，所以 清洁术CD == 0 恒成立）
         elif 清洁术CD == 0 and 驱散单位 is not None:
-            current_step = f"施放 清毒术 on {驱散单位}"
-            action_hotkey = get_hotkey(int(驱散单位), "清毒术")
+            current_step = f"施放 清洁术 on {驱散单位}"
+            action_hotkey = get_hotkey(int(驱散单位), "清洁术")
         elif 清洁术CD == 0 and 目标类型 in (12, 13, 15):
-            current_step = "施放 清毒术 on 目标"
-            action_hotkey = get_hotkey(0, "清毒术")
+            current_step = "施放 清洁术 on 目标"
+            action_hotkey = get_hotkey(0, "清洁术")
 
         # ==================== 团队/队伍/单人逻辑 ====================
         elif 队伍类型 == 0 or (队伍类型 >= 1 and 队伍类型 <= 40):
@@ -351,8 +316,8 @@ def run_paladin_logic(state_dict, spec_name):
                 elif not 施法 and not 移动 and 最低生命值 < 60:
                     current_step = "站桩 圣光术"
                     action_hotkey = get_hotkey(int(最低单位), "圣光术")
-                # 群抬
-                elif 圣光守望CD == 0 and 神圣震击CD <= 2 and not 移动 and HP75 >= 3:
+                # 群抬：圣光守望没有冷却，只看震击剩余和低血人数
+                elif 神圣震击CD <= 2 and not 移动 and HP75 >= 3:
                     current_step = "群奶 圣光守望"
                     action_hotkey = get_hotkey(int(最低单位), "圣光守望")
                 # 圣光闪现
@@ -393,8 +358,12 @@ def run_paladin_logic(state_dict, spec_name):
         # 圣印是常驻 buff（30 秒），战斗内外都要维持，提前算好给两条分支共用
         想要圣印 = _prot_seal(spells, 能量值, 当前圣印, 圣印剩余)
 
+        # 法术失败重试：优先级最高，被抵抗/打断的技能立刻补一次
+        if 法术失败 != 0 and 失败法术 is not None:
+            current_step = f"施放 {失败法术}"
+            action_hotkey = get_hotkey(0, 失败法术)
         # 自疗：极端低血才丢圣疗（瞬发大治疗）
-        if not 正在读条 and 0 < 生命值 < 10 and 圣疗术CD == 0:
+        elif not 正在读条 and 0 < 生命值 < 10 and 圣疗术CD == 0:
             current_step = f"圣疗术 自救 ({生命值}%)"
             action_hotkey = get_hotkey(0, "圣疗术")
         # 正义之怒：常驻仇恨
@@ -459,7 +428,11 @@ def run_paladin_logic(state_dict, spec_name):
         # 圣印是常驻 buff（30 秒），战斗内外都要维持
         想要圣印 = _ret_seal(spells, 能量值)
 
-        if not 正在读条 and not 移动 and 0 < 生命值 < 45 and 能量值 >= 35:
+        # 法术失败重试：优先级最高
+        if 法术失败 != 0 and 失败法术 is not None:
+            current_step = f"施放 {失败法术}"
+            action_hotkey = get_hotkey(0, 失败法术)
+        elif not 正在读条 and not 移动 and 0 < 生命值 < 45 and 能量值 >= 35:
             current_step = f"自疗 圣光闪现 ({生命值}%)"
             # 用 unit 1：宏体自带 [nogroup,@player]，单人时会自动落到自己
             action_hotkey = get_hotkey(1, "圣光闪现")
