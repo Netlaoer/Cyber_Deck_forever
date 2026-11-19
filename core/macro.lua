@@ -88,3 +88,30 @@ function CyberDeck:CreateMacro(dynamicData, staticData, specialData)
         end
     end
 end
+
+-- ================================================================
+--  诊断：/cy macro  看宏按钮到底建出来没有
+-- ================================================================
+function CyberDeck:PrintMacroDebug()
+    if InCombatLockdown() then
+        self:Print("|cffff0000战斗中无法诊断（宏也建不出来），请脱战后再试|r")
+        return
+    end
+    local count = 0
+    for _ in pairs(macroList) do count = count + 1 end
+    self:Print(("宏按钮: |cff00ff00%d|r 个（键位总数 %d）"):format(count, #macroKind))
+    if count == 0 then
+        self:Print("|cffff0000一个都没建|r —— 载入时应该在战斗中，脱战后 /reload 一次")
+        return
+    end
+    local probe = { { 1, "圣光术 unit1" }, { 2, "圣光术 unit2" }, { 151, "审判(静态1)" } }
+    for _, item in ipairs(probe) do
+        local idx, label = item[1], item[2]
+        local name = "s" .. idx
+        local btn = macroList[name]
+        self:Print(("  %-16s %s  键位=%s"):format(
+            label,
+            btn and "|cff00ff00已建|r" or "|cffff0000未建|r",
+            tostring(macroKind[idx])))
+    end
+end

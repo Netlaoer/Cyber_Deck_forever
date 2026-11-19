@@ -237,6 +237,9 @@ function CyberDeck:SlashCommand(input, editbox)
     elseif command == "message" then
         print("this is our saved message:", self.db and self.db.profile and self.db.profile.someInput)
         return
+    elseif command == "macro" then
+        self:PrintMacroDebug()
+        return
     elseif command == "options" or command == "config" then
         if self.optionsFrame and self.optionsFrame.name and Settings and Settings.OpenToCategory then
             pcall(Settings.OpenToCategory, self.optionsFrame.name)

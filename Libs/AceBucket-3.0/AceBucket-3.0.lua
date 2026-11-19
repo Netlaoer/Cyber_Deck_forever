@@ -34,10 +34,10 @@
 -- end
 -- @class file
 -- @name AceBucket-3.0.lua
--- @release $Id: AceBucket-3.0.lua 1284 2022-09-25 09:15:30Z nevcairiel $
+-- @release $Id$
 
 local MAJOR, MINOR = "AceBucket-3.0", 4
-local AceBucket, oldminor = LibStub:NewLibrary(MAJOR, MINOR)
+local AceBucket = LibStub:NewLibrary(MAJOR, MINOR)
 
 if not AceBucket then return end -- No Upgrade needed
 
@@ -48,10 +48,9 @@ AceBucket.embeds = AceBucket.embeds or {}
 local AceEvent, AceTimer
 
 -- Lua APIs
-local tconcat = table.concat
-local type, next, pairs, select = type, next, pairs, select
-local tonumber, tostring, rawset = tonumber, tostring, rawset
-local assert, loadstring, error = assert, loadstring, error
+local type, next, pairs = type, next, pairs
+local tonumber, tostring = tonumber, tostring
+local error = error
 
 local bucketCache = setmetatable({}, {__mode='k'})
 

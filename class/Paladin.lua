@@ -142,7 +142,8 @@ CyberDeck.MacrosList = {
     -- specialSpells 里是**完整宏体**（不拼 /cast），与 staticSpells 同位置时优先。
     -- /startattack 不占 GCD，[harm,nodead] 保证对无效目标不产生红字报错。
     specialSpells = {
-        [35] = "/startattack [harm,nodead]",
+        -- special 与 static 同槽位时 special 优先
+        [37] = "/startattack [harm,nodead]",
     },
     staticSpells = {
         [1] = "审判",
@@ -178,6 +179,10 @@ CyberDeck.MacrosList = {
         [31] = "智慧祝福",
         [32] = "力量祝福",
         [33] = "虔诚光环",
+        -- 单人变体：无限服的自定义核心对动态宏里的 [nogroup,@player] 不生效，
+        -- 必须让决策层在单人时切到这些独立的 @player 宏（见 paladin_logic._solo_unit）
         [34] = "[@player]圣光闪现",
+        [35] = "[@player]圣光术",
+        [36] = "[@player]神圣震击",
     },
 }

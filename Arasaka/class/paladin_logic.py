@@ -18,6 +18,7 @@ from utils import (
     count_units_below_health,
     get_hotkey,
     get_lowest_health_unit,
+    get_lowest_health_unit_without_aura,
     get_unit_with_dispel_type,
 )
 
@@ -126,6 +127,24 @@ def _prot_seal(spells, mana, current_seal=None, seal_remaining=0):
     return _first_known_seal(spells, (SEAL_FURY, SEAL_JUSTICE, SEAL_WISDOM))
 
 
+def _solo_unit(state_dict, unit):
+    """单人时切到 @player 宏。
+
+    无限服的自定义核心对动态宏里的 [nogroup,@player] 不生效（实测：单人按 unit1
+    的圣光术宏毫无反应，而 `/cast 审判` 这种无条件的静态宏正常），所以单人必须
+    用独立的 [@player]xxx 宏，不能依赖宏体的条件回退。
+    """
+    group = state_dict.get("group") or {}
+    seen = 0
+    for i in range(1, 31):
+        g = group.get(str(i)) or {}
+        if g.get("生命值", 0) > 0:
+            seen += 1
+            if seen > 1:
+                return int(unit)
+    return 0
+
+
 def _ret_seal(spells, mana):
     if mana >= 25:
         return _first_known_seal(spells, (SEAL_COMMAND, SEAL_JUSTICE))
@@ -212,6 +231,30 @@ def run_paladin_logic(state_dict, spec_name):
     虔诚光环 = _int(state_dict, "虔诚光环")
 
     圣疗术CD = _cd(spells, "圣疗术")
+    圣盾术CD = _cd(spells, "圣盾术")
+    # ---- 正式服专有资源/技能（无限服没有）----
+    # 分支是从正式服搬来的，会引用这些名字。这里统一给"无/不可用"的默认值，
+    # 让相关分支自然失效：不会 NameError，也不会因为默认值误命中。
+    # 适配时可以直接把这些分支删掉，变量也就不需要了。
+    神圣能量 = state_dict.get("神圣能量", 0)        # 正式服的圣能（无限服没有，恒 0）
+    圣光灌注BUFF = state_dict.get("圣光灌注", 0)    # 无限服有 26 号像素，能用
+    神性层数BUFF = state_dict.get("神性层数", 0)
+    神圣意志BUFF = state_dict.get("神圣意志", 0)
+    美德道标BUFF = state_dict.get("美德道标", 0)
+    美德道标CD = spells.get("美德道标", -1)
+    圣洁鸣钟CD = spells.get("圣洁鸣钟", -1)
+    神圣棱镜CD = spells.get("神圣棱镜", -1)
+    圣光守望CD = spells.get("圣光守望", -1)
+    震击充能CD = spells.get("震击充能", -1)
+    大红冷却CD = _cd(spells, "大红冷却")
+    # ---- 正式服专有上下文（无限服没有对应数据源）----
+    orig_目标类型 = _int(state_dict, "目标类型")   # 正式服分支会临时改写 目标类型，需要留原值
+    队伍类型 = 0            # 正式服按 GetNumRaidMembers 区分团队/小队/场景，无限服暂无来源
+    首领战 = 0              # 正式服读 C_Scenario 的副本进度，无限服暂无来源
+    need_dispel_bosses = ()  # 正式服白名单：这些 Boss 必须驱散
+    no_dispel_bosses = ()    # 正式服黑名单：这些 Boss 不驱散
+    失败法术 = 0             # _get_failed_spell 的结果，正式服用来防连点同一个失败技能
+    法术失败 = 0
     清洁术CD = _cd(spells, "清洁术")
 
     圣光术CD = _cd(spells, "圣光术")
@@ -244,64 +287,124 @@ def run_paladin_logic(state_dict, spec_name):
         current_step = "延迟/引导中，不操作"
         return None, current_step, unit_info
 
-    # ==================== 神圣 ====================
+    # ==================== 神圣（搬自正式服，待适配）====================
+    # 下面是正式服 Cyber_Deck 的神圣分支原文，含神圣能量 / 美德道标 / 圣洁鸣钟 /
+    # 永恒之火 / 荣耀圣令 / 黎明之光 / 神圣棱镜 / 光环掌握等正式服内容。
+    # 无限服没有这些技能与资源：相关分支因为 spells.get(..., -1) / state_dict.get(..., 0)
+    # 会自动跳过（不报错、也不命中）。适配时按需删掉或换成 60 级的做法。
     if spec_name == "神圣":
-        驱散单位 = _pick_dispel_unit(state_dict, 驱散开关)
+        # Holy选中友方/无目标(战斗中有焦点)时，临时改为进攻目标类型
+        # 无目标但在战斗中：审判/震击宏已指向[@focustarget]，自动打焦点目标
+        if orig_目标类型 >= 11 or (orig_目标类型 == 0 and 战斗):
+            state_dict["目标类型"] = 2
+            目标类型 = 2
+        # 5豆且有5码内敌人时，伪造目标距离让正义盾击条件通过
+        if state_dict.get("神圣能量", 0) == 5 and state_dict.get("5码敌人", 0) >= 1:
+            state_dict["目标距离"] = 1
+            目标距离 = 1
+        dispel_unit_magic, _ = get_unit_with_dispel_type(state_dict, 1)
+        dispel_unit_disease, _ = get_unit_with_dispel_type(state_dict, 3)
+        dispel_unit_poison, _ = get_unit_with_dispel_type(state_dict, 4)
+        最低单位_orig, 最低生命值_orig = get_lowest_health_unit(state_dict, 100)
+        无火最低_orig, 无火最低血量_orig = get_lowest_health_unit_without_aura(state_dict, "永恒之火", health_threshold=101)
+        最低单位 = 最低单位_orig or "0"
+        最低生命值 = 最低生命值_orig or 100
+        无火最低 = 无火最低_orig or "0"
+        无火最低血量 = 无火最低血量_orig or 101
         HP90 = count_units_below_health(state_dict, 90)
+        HP80 = count_units_below_health(state_dict, 80)
         HP75 = count_units_below_health(state_dict, 75)
         HP60 = count_units_below_health(state_dict, 60)
+
         unit_info = {
-            "最低单位": 最低单位 if 最低单位 != "0" else None,
-            "最低生命值": 最低生命值,
+            "最低单位": 最低单位_orig,
+            "最低生命值": 最低生命值_orig,
+            "无火最低": 无火最低_orig,
+            "无火最低血量": 无火最低血量_orig,
             "HP<90%人数": HP90,
+            "HP<80%人数": HP80,
             "HP<75%人数": HP75,
             "HP<60%人数": HP60,
-            "法力": 能量值,
-            "圣印": 当前圣印,
         }
 
-        # 圣印维持：缺蓝用智慧，否则光明；没学就退回正义
-        想要圣印 = _holy_seal(spells, 能量值)
-        圣印就绪 = 想要圣印 is not None and 当前圣印 != 想要圣印 and not 正在读条
+        # 驱散优先级：魔法 > 疾病 > 毒素
+        驱散单位 = None
+        if dispel_unit_magic is not None:
+            if 队伍类型 == 46 and 首领战 not in no_dispel_bosses:
+                驱散单位 = dispel_unit_magic
+            elif 队伍类型 <= 40 and 首领战 in need_dispel_bosses:
+                驱散单位 = dispel_unit_magic
+        if 驱散单位 is None:
+            驱散单位 = dispel_unit_disease
+        if 驱散单位 is None:
+            驱散单位 = dispel_unit_poison
 
-        if 清洁术CD == 0 and 驱散单位 is not None:
-            current_step = f"清洁术 驱散 {驱散单位}"
-            action_hotkey = get_hotkey(int(驱散单位), "清洁术")
+        # ---- 优先级 0: 引导中 ----
+        if 引导 > 0 or 延迟 > 0:
+            current_step = "在引导,不执行任何操作"
 
-        # 神恩术：爆发开时给大治疗铺暴击
-        elif 爆发 == 1 and 神恩术CD == 0 and 神恩术 == 0 and not 正在读条 and 最低生命值 < 55:
-            current_step = "神恩术"
-            action_hotkey = get_hotkey(0, "神恩术")
+        # ---- 优先级 1: 法术失败重试 ----
+        elif 法术失败 != 0 and 失败法术 is not None:
+            current_step = f"施放 {失败法术}"
+            action_hotkey = get_hotkey(0, 失败法术)
 
-        # 治疗：圣光术吃大缺口，圣光闪现平刷
-        elif not 正在读条 and not 移动 and 最低生命值 < 40 and 能量值 >= 25 and 圣光术CD == 0:
-            current_step = f"圣光术 -> {最低单位} ({最低生命值}%)"
-            action_hotkey = get_hotkey(int(最低单位), "圣光术")
-        elif not 正在读条 and not 移动 and 最低生命值 < 65 and 能量值 >= 12 and 圣光闪现CD == 0:
-            current_step = f"圣光闪现 -> {最低单位} ({最低生命值}%)"
-            action_hotkey = get_hotkey(int(最低单位), "圣光闪现")
-        elif not 正在读条 and not 移动 and 最低生命值 < 88 and 能量值 >= 45 and 圣光闪现CD == 0:
-            current_step = f"平刷 圣光闪现 -> {最低单位} ({最低生命值}%)"
-            action_hotkey = get_hotkey(int(最低单位), "圣光闪现")
+        # ---- 优先级 2: 驱散 ----
+        elif 清洁术CD == 0 and 驱散单位 is not None:
+            current_step = f"施放 清毒术 on {驱散单位}"
+            action_hotkey = get_hotkey(int(驱散单位), "清毒术")
+        elif 清洁术CD == 0 and 目标类型 in (12, 13, 15):
+            current_step = "施放 清毒术 on 目标"
+            action_hotkey = get_hotkey(0, "清毒术")
 
-        # 神圣震击：瞬发，补缺口
-        elif 神圣震击CD == 0 and not 正在读条 and 最低生命值 < 90 and 能量值 >= 15:
-            current_step = f"神圣震击 -> {最低单位} ({最低生命值}%)"
-            action_hotkey = get_hotkey(int(最低单位), "神圣震击")
+        # ==================== 团队/队伍/单人逻辑 ====================
+        elif 队伍类型 == 0 or (队伍类型 >= 1 and 队伍类型 <= 40):
+            # ---- 优先级 1: 重要 ----
+            # 大红(银月城生命药水)
+            #if 大红冷却CD == 0 and 生命值 < 30:
+            #    current_step = "使用 生命药水"
+            #    action_hotkey = get_hotkey(0, "银月城生命药水")
+            # 圣盾术
+            if 圣盾术CD == 0 and 生命值 < 15:
+                current_step = "施放 圣盾术"
+                action_hotkey = get_hotkey(_solo_unit(state_dict, 1), "圣盾术")
+            # 圣疗术
+            elif 圣疗术CD == 0 and 圣盾术CD > 0 and 生命值 < 15:
+                current_step = "施法 圣疗术"
+                action_hotkey = get_hotkey(_solo_unit(state_dict, 1), "圣疗术")
+            # ---- 优先级 2: 常规 ----
+            elif 战斗 :
+                # 圣光术站桩
+                if not 施法 and not 移动 and 最低生命值 < 60:
+                    current_step = "站桩 圣光术"
+                    action_hotkey = get_hotkey(_solo_unit(state_dict, 最低单位), "圣光术")
+                # 群抬
+                elif 圣光守望CD == 0 and 神圣震击CD <= 2 and not 移动 and HP75 >= 3:
+                    current_step = "群奶 圣光守望"
+                    action_hotkey = get_hotkey(int(最低单位), "圣光守望")
+                # 圣光闪现
+                elif not 施法 and not 移动 and 最低生命值 <= 90:
+                    current_step = "圣光闪现"
+                    action_hotkey = get_hotkey(_solo_unit(state_dict, 最低单位), "圣光闪现")
+                # 神圣震击
+                elif 神圣震击CD == 0 and not 施法 and 最低生命值 < 95:
+                    current_step = "施放 神圣震击"
+                    action_hotkey = get_hotkey(_solo_unit(state_dict, 最低单位), "神圣震击")
+ 
+            # ---- 优先级 3: 进攻 ----
+            if current_step == "无匹配技能" and 战斗 and not 施法 and 1 <= 目标类型 <= 3:
+                # 智慧圣印优先：奶骑靠它回蓝，进攻前先确保挂着
+                if 当前圣印 != SEAL_WISDOM and not 施法:
+                    current_step = "施放 智慧圣印"
+                    action_hotkey = get_hotkey(0, "智慧圣印")
+                # 审判优先
+                elif 审判CD == 0:
+                    current_step = "进攻 审判"
+                    action_hotkey = get_hotkey(0, "审判")
+                # 神圣打击兜底
+                elif 神圣打击CD == 0:
+                    current_step = "进攻 神圣打击"
+                    action_hotkey = get_hotkey(0, "神圣打击")
 
-        # 圣印：只在战斗中补，脱战不主动换
-        elif 战斗 and 圣印就绪:
-            seal_name = SEAL_SPELLS[想要圣印]
-            current_step = f"换 {seal_name}"
-            action_hotkey = get_hotkey(0, seal_name)
-
-        # 空闲输出：近战位审判
-        elif 战斗 and _is_enemy(目标类型) and _in_melee(目标距离) and 审判CD == 0:
-            current_step = "审判"
-            action_hotkey = get_hotkey(0, "审判")
-        elif 战斗 and _is_enemy(目标类型) and _in_melee(目标距离, 20) and 神圣震击CD == 0 and 能量值 >= 60:
-            current_step = "进攻 神圣震击"
-            action_hotkey = get_hotkey(0, "神圣震击")
 
     # ==================== 防护 ====================
     elif spec_name == "防护":
@@ -387,7 +490,8 @@ def run_paladin_logic(state_dict, spec_name):
 
         if not 正在读条 and not 移动 and 0 < 生命值 < 45 and 能量值 >= 35 and 圣光闪现CD == 0:
             current_step = f"自疗 圣光闪现 ({生命值}%)"
-            action_hotkey = get_hotkey(0, "圣光闪现")
+            # 用 unit 1：宏体自带 [nogroup,@player]，单人时会自动落到自己
+            action_hotkey = get_hotkey(_solo_unit(state_dict, 1), "圣光闪现")
         elif 目标施法 > 0 and 制裁之锤CD == 0:
             current_step = "制裁之锤 打断"
             action_hotkey = get_hotkey(0, "制裁之锤")

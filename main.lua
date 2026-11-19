@@ -1,5 +1,14 @@
 local addon, ns = ...
 local isSec = issecretvalue
+
+-- UNIT_AURA 的 info 字段（isFullUpdate / addedAuras / updated... / removed...）
+-- 在战斗中全是 secret。直接 `if info.x then` 会抛
+-- "attempt to perform boolean test on field 'isFullUpdate' (a secret boolean value)"。
+-- 统一取真值：读不到就返回 false，等价于"这次事件没有这一项"。
+local function safeTruthy(v)
+    if type(isSec) == "function" and isSec(v) then return false end
+    return v and true or false
+end
 local GetSpellCooldownDuration = C_Spell.GetSpellCooldownDuration
 local GetSpellChargeDuration = C_Spell.GetSpellChargeDuration
 local GetSpellCooldown = C_Spell.GetSpellCooldown
@@ -844,15 +853,20 @@ end
 -- 更新防御光环
 function CyberDeck:GetDefensiveAuraInstanceID(unit, info)
     if unit ~= "player" then return end
+    -- 只有恶魔猎手有「防御光环」这块；其它职业连读都不必读
+    if not (blocks and blocks.state and blocks.state["防御光环"]) then return end
+    -- 战斗中 UNIT_AURA 的 addedAuras 是 secret table，此时调 aura API 会抛
+    -- "Auras cannot be accessed when secret"，必须提前退出
+    if UnitAffectingCombat("player") then return end
     if info.addedAuras then
         for i = 1, 2 do
-            local aura = C_UnitAuras.GetBuffDataByIndex(unit, i, "HELPFUL|BIG_DEFENSIVE")
-            if not issecretvalue(aura) and aura then
+            local ok, aura = pcall(C_UnitAuras.GetBuffDataByIndex, unit, i, "HELPFUL|BIG_DEFENSIVE")
+            if ok and aura and not (type(issecretvalue) == "function" and issecretvalue(aura)) then
                 state.DefensiveAuraInstanceID = aura.auraInstanceID
             end
         end
     end
-    if info.removedAuraInstanceIDs then
+    if safeTruthy(info.removedAuraInstanceIDs) then
         for _, v in pairs(info.removedAuraInstanceIDs) do
             if v == state.DefensiveAuraInstanceID then
                 state.DefensiveAuraInstanceID = nil
@@ -864,8 +878,8 @@ end
 function CyberDeck:GetDefensiveAuraDuration()
     if blocks and blocks.state["防御光环"] then
         if state.DefensiveAuraInstanceID then
-            local duration = C_UnitAuras.GetAuraDuration("player", state.DefensiveAuraInstanceID)
-            if duration then
+            local okdur, duration = pcall(C_UnitAuras.GetAuraDuration, "player", state.DefensiveAuraInstanceID)
+            if okdur and duration then
                 local auraduration = duration:EvaluateRemainingDuration(curve255)
                 ---@diagnostic disable-next-line: param-type-mismatch
                 local _, _, b = auraduration:GetRGB()
@@ -1324,8 +1338,8 @@ function CyberDeck:updateUnitFullAura(unit)
     local obj = group[unit]
     if not obj then return end
     for i = 1, 5 do
-        local buff = C_UnitAuras.GetBuffDataByIndex(unit, i, "PLAYER|HELPFUL|RAID_IN_COMBAT")
-        if buff then
+        local okb, buff = pcall(C_UnitAuras.GetBuffDataByIndex, unit, i, "PLAYER|HELPFUL|RAID_IN_COMBAT")
+        if okb and buff then
             obj.aura[buff.auraInstanceID] = buff
         end
     end
@@ -1368,7 +1382,7 @@ function CyberDeck:OnUpdateUnitAura()
             local index = blocks.groups.start + (data.index - 1) * blocks.groups.num + i
             local maxAura = getMaxAuraByTable(unit, spellIds)
             if maxAura and maxAura.auraInstanceID then
-                local duration = C_UnitAuras.GetAuraDuration(unit, maxAura.auraInstanceID)
+                local okd, duration = pcall(C_UnitAuras.GetAuraDuration, unit, maxAura.auraInstanceID)
                 if maxAura.expirationTime == 0 then
                     self:CreatTexture(index, 1)
                 elseif duration then
@@ -1481,6 +1495,16 @@ end
 function CyberDeck:PLAYER_TALENT_UPDATE()
     self:updatePlayerSpecInfo()
     self:updateGroup()
+    -- 事件触发时天赋点数可能还是旧值（服务器未同步），再延迟刷两次兜底。
+    -- 无限服切天赋的 spellID 不是正式服的 384255 / 200749，那条延迟路径走不到，
+    -- 所以必须在这里补，否则 GUI 会一直显示切换前的专精。
+    if not self.isForever then return end
+    for _, delay in ipairs({ 0.5, 2.0 }) do
+        C_Timer.After(delay, function()
+            if InCombatLockdown() then return end
+            self:updatePlayerSpecInfo()
+        end)
+    end
 end
 
 function CyberDeck:PLAYER_DEAD()
@@ -1878,8 +1902,8 @@ function CyberDeck:TestFiltered(unit, auraInstanceID)
         "HELPFUL BIG_DEFENSIVE",
         "HELPFUL IMPORTANT",
     }
-    local aura = C_UnitAuras.GetAuraDataByAuraInstanceID(unit, auraInstanceID)
-    if aura then
+    local okaura, aura = pcall(C_UnitAuras.GetAuraDataByAuraInstanceID, unit, auraInstanceID)
+    if okaura and aura then
         for _, filter in pairs(AuraFilters) do
             local isFiltered = C_UnitAuras.IsAuraFilteredOutByInstanceID(unit, auraInstanceID, filter)
             local boolColored
@@ -1898,11 +1922,11 @@ function CyberDeck:UNIT_AURA(_, unit, info)
     local obj = group[unit]
     if not obj then return end
     getAuraDispelTypeColor(unit)
-    if info.isFullUpdate then
+    if safeTruthy(info.isFullUpdate) then
         self:updateUnitFullAura(unit)
         return
     end
-    if info.addedAuras then
+    if safeTruthy(info.addedAuras) then
         for k, v in pairs(info.addedAuras) do
             -- print("|cnGREEN_FONT_COLOR:新增光环: |r", v.auraInstanceID, v.spellId, v.name, v.duration)
             if not isSec(v.spellId) and v.sourceUnit == "player" then
@@ -1910,16 +1934,18 @@ function CyberDeck:UNIT_AURA(_, unit, info)
             end
         end
     end
-    if info.updatedAuraInstanceIDs then
+    if safeTruthy(info.updatedAuraInstanceIDs) then
         for _, v in pairs(info.updatedAuraInstanceIDs) do
-            local aura = C_UnitAuras.GetAuraDataByAuraInstanceID(unit, v)
-            if aura and not isSec(aura.spellId) and aura.sourceUnit == "player" then
-                -- print("|cnYELLOW_FONT_COLOR:更新光环: |r", aura.auraInstanceID, aura.spellId, aura.name)
-                obj.aura[aura.auraInstanceID] = aura
-            end
+            -- 战斗中 instanceID / spellId / sourceUnit 都可能是 secret，整体包一层
+            pcall(function()
+                local aura = C_UnitAuras.GetAuraDataByAuraInstanceID(unit, v)
+                if aura and not isSec(aura.spellId) and aura.sourceUnit == "player" then
+                    obj.aura[aura.auraInstanceID] = aura
+                end
+            end)
         end
     end
-    if info.removedAuraInstanceIDs then
+    if safeTruthy(info.removedAuraInstanceIDs) then
         for _, v in pairs(info.removedAuraInstanceIDs) do
             -- print("|cnRED_FONT_COLOR:移除光环: |r", v)
             obj.aura[v] = nil
