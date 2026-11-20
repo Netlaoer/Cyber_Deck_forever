@@ -11,7 +11,7 @@ from utils import get_hotkey
 
 # 萨满驱散能力：净化术(526) 驱诅咒；祛病术(2870) 驱疾病
 # 注意：无限服萨满没有「清毒术」（只有「清毒图腾」）
-DISPEL_TYPES = (2, 4)
+DISPEL_TYPES = (2, 3)
 
 HEAL_LOW = 60
 AOE_3 = 3
@@ -142,6 +142,39 @@ def _reset_upkeep():
     _upkeep_state.clear()
 
 
+def _pick_unknown_dispel_unit(state_dict):
+    """受限降级：在「驱散字段 = 5（未知）」的队友里挑血量最低的。
+
+    战斗中光环数据受限，读不到减益的具体类型，Lua 侧会给所有队友写 5。
+    这里只能盲驱 —— 挑血量最低的，因为他最可能身上有减益。
+    驱动散技能只会移除它能驱的类型，队友没减益时这一下是空放。
+    """
+    group = state_dict.get("group") or {}
+    best = None
+    best_pct = None
+    for key, data in group.items():
+        if not isinstance(data, dict):
+            continue
+        if str(data.get("驱散")) != "5":
+            continue
+        role = data.get("职责")
+        try:
+            if role is not None and int(role) == 0:
+                continue
+        except (TypeError, ValueError):
+            pass
+        pct = data.get("生命值")
+        try:
+            pct = int(pct) if pct is not None else 100
+        except (TypeError, ValueError):
+            pct = 100
+        if best_pct is None or pct < best_pct:
+            best, best_pct = key, pct
+    if best is None:
+        return None, None
+    return best, group.get(best)
+
+
 def _pick_dispel_unit(state_dict, 驱散开关, types):
     """挑一个需要驱散（且自己会驱）的队友。
 
@@ -155,6 +188,11 @@ def _pick_dispel_unit(state_dict, 驱散开关, types):
         slot, data = get_unit_with_dispel_type(state_dict, t)
         if slot:
             return slot, data
+    # 战斗中光环数据受限（secret），读不到减益的具体类型，
+    # Lua 侧会写 5（未知但确实有减益）-> 这里盲驱血量最低的队友。
+    slot, data = _pick_unknown_dispel_unit(state_dict)
+    if slot:
+        return slot, data
     return None, None
 
 
@@ -170,16 +208,17 @@ def run_shaman_logic(state_dict, spec_name):
     ctx = Ctx(state_dict, spec_name)
     spec = ctx.spec
 
-    if not ctx.in_combat:
-        return None, "脱战", {}
-
     # -- 驱散 --
+    # 战斗和脱战都驱：脱战时驱散是战前清理（队友身上的减益还没过期）
     slot, _ = _pick_dispel_unit(state_dict, ctx.dispel_switch, DISPEL_TYPES)
     if slot:
         for sk in ("净化术", "祛病术"):
             hk = _skill(ctx, sk, int(slot))
             if hk:
                 return hk, "%s on %s" % (sk, slot), {"unit": slot}
+
+    if not ctx.in_combat:
+        return None, "脱战", {}
 
     # -- 打断 --
     if ctx.target_casting:

@@ -138,7 +138,7 @@ CyberDeck.ClassBlocks = {
 -- 宏位总数上限 = 7 组修饰键 x 39 键 = 273，
 -- 动态技能数 x 30 + 静态数 不能超过 273。
 CyberDeck.MacrosList = {
-    dynamicSpells = {},
+    dynamicSpells = { "解除次级诅咒" },
     specialSpells = {
     },
     staticSpells = {

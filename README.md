@@ -38,7 +38,7 @@ AI_INSTRUCTION（AI 必读）：
 - **9 个职业**：战士/圣骑/猎人/盗贼/牧师/萨满/法师/术士/德鲁伊，各有独立的像素布局与决策逻辑
 - **零侵入操作**：`PostMessage` 后台发键，不抢焦点，可以边挂机边打字
 - **热重载**：改完 Python 逻辑点一下 GUI「重载」即可，不用重启进程
-- **可观测**：`/cy gui` 看像素原始值、`/cy spec` 看专精/技能解析、`/cy auraprobe` 探测哪些光环字段被 secret 保护、`/cy dispelprobe` 看驱散点位
+- **可观测**：`/cy gui` 看像素原始值、`/cy spec` 看专精/技能解析、`/cy auraprobe` 探测哪些光环字段被 secret 保护、`/cy dispelprobe` 看驱散点位、`/cy dispelscan` 逐环诊断驱散链路
 
 ### 快速开始
 
@@ -258,10 +258,12 @@ char = { level, aoeMode, cooldowns, dpsMode, delay, potion,
 | `/cy potion` / `on` / `off` | 切换/开启/关闭爆发药水 |
 | `/cy delay [秒]` | 临时延迟逻辑（默认 1 秒） |
 | `/cy dispel` / `on` / `off` | 切换/开启/关闭驱散 |
+| `/cy dispel blind` / `on` / `off` | 战斗中读不到减益信息时的取舍：**关**=不空放（默认）、**开**=宁可空放也要驱 |
 | `/cy gui` | 打开像素块调试界面 |
 | `/cy spec` | 打印专精判定过程、招牌技能探测、离线技能表 |
 | `/cy auraprobe` / `ap` | 探测哪些光环字段被 secret 保护 |
 | `/cy dispelprobe` | 打印 4 种驱散类型的命中法术、曲线点位、各单位可驱散减益条数 |
+| `/cy dispelscan`（`/cy ds`） | **驱散链路逐环诊断**：受限状态 / 玩家能驱的类型 / 每个 debuff 的 spellId 与 dispelName / 曲线求值 / 驱散像素索引 |
 | `/cy options` / `config` | 打开 Ace3 选项界面 |
 | `/cy message <文本>` | 聊天框测试 |
 | `/cy help` | 打印帮助信息 |
@@ -415,7 +417,7 @@ state_dict = {
         "1": {                       # 键是队友序号 "1"~"30"
             "生命值": int,           # 血量%
             "职责": int,             # 1=坦克 2=治疗 3=输出 0=不计
-            "驱散": int,             # 需要驱散的类型（1 魔法 2 诅咒 3 疾病 4 中毒）
+            "驱散": int,             # 需要驱散的类型（1 魔法 2 诅咒 3 疾病 4 中毒 5=未知）
             # …该职业的队友追踪字段（光环秒数之类），由 group 段配置决定
         },
         ...
@@ -437,7 +439,7 @@ state_dict = {
 | 目标类型 | 0=无/超距/死亡, 1~10=敌对, 11~20=友善（1/11 为基线，其余为可驱散细分） |
 | 队伍类型 | 0=单人, 1-40=团本, 46=大秘 |
 | 职业ID | 1=战士 2=圣骑 3=猎人 4=盗贼 5=牧师 6=DK 7=萨满 8=法师 9=术士 10=武僧 11=德 12=DH 13=唤魔师（无限服只有 1~5、7~9、11 存在） |
-| 驱散类型 | 1=魔法 2=诅咒 3=疾病 4=中毒；**各职业能驱的类型不同**，看 `Progress/<职业>.md` |
+| 驱散类型 | 1=魔法 2=诅咒 3=疾病 4=中毒 **5=未知**（有减益但类型读不到，见下）；**各职业能驱的类型不同**，看 `Progress/<职业>.md` |
 
 ---
 
@@ -1039,6 +1041,171 @@ python .workbuddy/check_readme.py               # 文档与代码一致
 
 ---
 
+## 十六点五、驱散机制（照正式服那样画像素）
+
+驱散就一件事：**把「队友身上有哪种可驱减益」画进像素，Python 侧据此选人施法。**
+
+### 正式服那条路（无限服也要保持一致）
+
+```lua
+-- main.lua
+local function readDispelType(unit)
+    local ids = CyberDeck:GetAuraInstanceIDs(unit, "HARMFUL|RAID_PLAYER_DISPELLABLE", 40)
+    if ids and #ids > 0 then
+        local b = pickTypeByCurve(unit, ids, dispelCurve)   -- 曲线求值
+        if b then
+            local t = math.floor(b * 255 + 0.5)            -- 蓝通道 = 类型号
+            if t > 0 and t < 10 then return t end
+        end
+        return DISPEL_TYPE_UNKNOWN
+    end
+    return nil
+end
+
+local function getAuraDispelTypeColor(unit)
+    local index = blocks.groups.start + (obj.index - 1) * blocks.groups.num + blocks.groups.dispel
+    local t = readDispelType(unit)
+    CyberDeck:CreatTexture(index, t and t / 255 or 0)
+end
+```
+
+色条第 i 格的编码是 `(0, i/255, value)` —— **绿=索引、蓝=值、红=0**，
+Python 侧 `row_data[g] = b` 直接读走。
+
+### 唯一的问题：无限服在战斗中把光环 secret 化
+
+`C_UnitAuras.*` 全部读不到（抛 secret 错误 / 返回 nil 被扣留），
+所以 `readDispelType` 在战斗中返回 nil → 那一格写 0 → **不驱散**。
+
+实测确认（2026-11-21，无限服 1.60.1）：
+
+| 通道 | 战斗中 | 证据 |
+|------|--------|------|
+| 索引型光环 API | ❌ 抛 secret 错误 | `Auras cannot be accessed when secret` |
+| 按 ID / 名字查询 | ❌ 返回 nil（被扣留） | 与「没有这个 debuff」无法区分 |
+| UNIT_AURA 的 payload | ❌ 字段全是 secret | `addedAuras` / `isFullUpdate` 都读不到 |
+| AuraContainer 的 slot | ❌ forbidden | 对受保护 button 调方法会被拒 |
+| `SetApplicationBar` 数值 | ❌ forbidden | |
+| `initializeFrame` 回调次数 | ❌ 只在创建时触发一次 | 不是内容信号 |
+| NeverSecret 光环 | ❌ 全是 ContextuallySecret | 24 个经典 debuff 逐个查过 |
+| tooltip 类光环 API | ❌ 客户端没有 | `C_TooltipInfo` 只有物品/法术 |
+
+### 解法：**还是画进色条，只是「画」这一步改由引擎代劳**
+
+客户端自带的 Decursive 在受限（`DC.RESTRICTED_AURAS`）时就是这么干的
+（`Dcr_DebuffsFrame.lua:1168`）：**把一块我们自己创建的纹理交给引擎**，
+引擎按光环的驱散类型给它染色 —— **引擎侧操作，插件全程不读光环数据，所以不受限**。
+
+```lua
+-- 在 initializeFrame 回调（创建窗口）里
+local tex = ab:CreateTexture(nil, "OVERLAY")
+tex:SetPoint("TOPLEFT", UIParent, "TOPLEFT", cellX, cellY)   -- 精确落在色条那一格
+tex:SetSize(cellW, cellH)
+tex:SetColorTexture(1, 1, 1, 1)                             -- ⚠️ 白色，见下
+ab:ClearDispelTypeTextures()
+ab:AddDispelTypeTexture(tex, {
+    showIcon = false,
+    style = Enum.CustomAuraButtonDispelTypeTextureStyle.PreserveAsset,
+    customDispelColorCurve = curve,     -- 类型 -> (0, 索引/255, 类型/255)
+})
+```
+
+曲线按**色条索引**各建一条（绿通道要编码索引）：
+
+```lua
+curve:AddPoint(0, CreateColor(0, cell / 255, 0, 1))            -- 无 debuff
+for t = 1, 4 do
+    curve:AddPoint(t, CreateColor(0, cell / 255, t / 255, 1))   -- 魔法/诅咒/疾病/中毒
+end
+curve:AddPoint(5, CreateColor(0, cell / 255, 5 / 255, 1))      -- 其它类型 = 未知
+```
+
+**最终像素和正式服逐字节一致**（红0、绿=索引、蓝=类型），
+所以 **Python 端一行都不用改** —— 读的还是原来那根色条。
+
+| | 正式服 | 无限服（受限） |
+|---|---|---|
+| 谁算出类型 | Lua 读光环 | **引擎**按光环类型染色 |
+| 谁来画 | Lua `CreatTexture(格索引, t/255)` | 引擎染色条上那一格的纹理 |
+| Python 怎么读 | 从色条读 | **从色条读（完全一样）** |
+
+### 三个必须记住的坑
+
+**① 模板必须先加载**
+
+```lua
+LoadAddOn("Blizzard_AuraContainer")   -- 不加载的话 CreateFrame 出来的只是普通 frame
+```
+
+不加载 → `AddAuraSlot` 是 nil → 探针压根建不起来 → 那一格永远是 Lua 写的值
+→ 战斗中读到 0 → **从不驱散**。（2026-11-21 踩过）
+
+**② 纹理必须是白色**
+
+颜色**全部由曲线提供**。若纹理自带颜色，引擎若是用「乘法」把曲线色乘上去，
+结果会被压成全黑（实测：纹理 `(0, 索引/255, 0)` × 曲线 `(0, 索引/255, 类型/255)`
+= `(0,0,0)`）→ 那一格全黑 → Python 读到驱散=0。
+白色纹理无论引擎是「设置」还是「相乘」都正确。
+
+**③ 曲线的 x 轴是类型原始值**
+
+x = 1魔法 / 2诅咒 / 3疾病 / 4中毒（Decursive 的 `DC.DTtoBT` 与本插件一致），
+**不是**归一化的 `t/255`。实测引擎取 Disease 时精确落在 x=3 那点。
+
+### 第二层：驱散技能必须走动态宏
+
+驱散要按队友施放 → 必须走 `dynamicSpells`（`@raidN`）。
+放 `staticSpells` 的后果很隐蔽：静态宏在 keymap 里只有 `unit: 0`，
+而 Python 侧是 `get_hotkey(队友槽位, "驱散技能")` → **查不到该队友的热键 → 返回 None → 不驱散**，
+而且不报任何错。
+
+```lua
+-- class/Priest.lua
+dynamicSpells = { "驱散魔法", "祛病术" },   -- ✓ 按队友施放
+-- staticSpells 里不能放驱散技能
+```
+
+### 第三层：驱散能力表要按实际法术填
+
+`DISPEL_TYPES` 决定「本职业能驱哪些类型」，填错会导致**选错人**或**永远匹配不到**：
+
+| 职业 | `DISPEL_TYPES` | 无限服实际法术 |
+|------|----------------|---------------|
+| 圣骑士 | `(1, 3, 4)` | 清洁术 4987（魔法/疾病/中毒）、纯净术 1152（疾病/中毒） |
+| 牧师 | `(1, 3)` | 驱散魔法 527（魔法）、祛病术 988（疾病） |
+| 萨满 | `(2, 3)` | 净化术 526（诅咒）、祛病术 2870（疾病） |
+| 德鲁伊 | `(2, 4)` | 解除诅咒 2782（诅咒）、驱毒术 8946（中毒） |
+| 法师 | `(2,)` | 解除次级诅咒 475（诅咒） |
+| 战士 / 猎人 / 盗贼 / 术士 | `()` | 无驱散技能 |
+
+### 排查顺序
+
+```bash
+/cy dispelpix       # 引擎染色探针：每个槽位指向谁、色条第几格、AddAuraSlot 成功没
+/cy dispelscan      # 驱散链路逐环诊断（战斗中跑一次，脱战再跑一次对比）
+/cy dispelprobe     # 驱散能力探测（点位 = 写进像素的驱散类型）
+```
+
+**Python 侧一键诊断**（读真实像素，直接告诉你卡在哪一环）：
+
+```bash
+D:/DevTools/pyenv-re313/Scripts/python.exe Arasaka/check_dispel.py
+```
+
+它会打印：驱散开关 / 有效性 / group 每格的 生命值·职责·驱散 / 驱散技能 CD，
+然后**把决策层实跑一遍**，给出 `action_hotkey` 和 `current_step`，
+并直接判断是「决策层没给动作」还是「动作给了但没发出去」。
+
+| 看什么 | 说明什么 |
+|--------|---------|
+| 探针的 `AddAuraSlot=失败` | 模板没加载（坑 ①） |
+| group 某格 `驱散=0` 但身上明明有 debuff | 引擎没染色 / 纹理被压黑（坑 ②） |
+| 「受限状态：是」 | 战斗中光环数据受限 → 只能靠引擎染色这条路 |
+| 「类型N：会/不会」 | 玩家会不会驱这一类 —— 「不会」说明能力表或已学会判定有问题 |
+| `action_hotkey=None` | 决策层没给动作 → 看 group 字段和技能 CD |
+
+---
+
 ## 十七、扩展前先查这里（现有能力对照）
 
 这一节的目的只有一个：**别重造轮子**。下面的每一条都是仓库里已经在跑的实现，
@@ -1096,6 +1263,7 @@ python .workbuddy/check_readme.py               # 文档与代码一致
 | 找低血队友 / 缺 buff 队友 / 驱散目标 | 25 个 `get_*` / `count_*` 选择器 | `Arasaka/utils.py` |
 | 热键查找与发送 | `get_hotkey()` + `send_key_to_wow()` | `Arasaka/utils.py` |
 | 像素 → state_dict | `build_state_dict()`（含 spells 子字典、group 展开） | `Arasaka/GetPixels.py` |
+| 光环受限（战斗中）降级 | `aurasRestricted()` → 类型写 5 → Python 盲驱第一个队友 | `main.lua` + 各职业 `_logic.py` |
 | 决策层热重载 | `reload_logic_modules()` | `logic_gui_Tools.py` |
 | 宏体创建 | `loadPlayerMacros()` → `CreateMacro()`（进入世界时一次，无手动命令） | `core/macro.lua` |
 

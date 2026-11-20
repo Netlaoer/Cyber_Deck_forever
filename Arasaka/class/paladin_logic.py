@@ -142,6 +142,39 @@ def _in_melee(距离, yards=10):
     return 距离 is not None and 0 < 距离 <= yards
 
 
+def _pick_unknown_dispel_unit(state_dict):
+    """受限降级：在「驱散字段 = 5（未知）」的队友里挑血量最低的。
+
+    战斗中光环数据受限，读不到减益的具体类型，Lua 侧会给所有队友写 5。
+    这里只能盲驱 —— 挑血量最低的，因为他最可能身上有减益。
+    驱动散技能只会移除它能驱的类型，队友没减益时这一下是空放。
+    """
+    group = state_dict.get("group") or {}
+    best = None
+    best_pct = None
+    for key, data in group.items():
+        if not isinstance(data, dict):
+            continue
+        if str(data.get("驱散")) != "5":
+            continue
+        role = data.get("职责")
+        try:
+            if role is not None and int(role) == 0:
+                continue
+        except (TypeError, ValueError):
+            pass
+        pct = data.get("生命值")
+        try:
+            pct = int(pct) if pct is not None else 100
+        except (TypeError, ValueError):
+            pct = 100
+        if best_pct is None or pct < best_pct:
+            best, best_pct = key, pct
+    if best is None:
+        return None, None
+    return best, group.get(best)
+
+
 def _pick_dispel_unit(state_dict, 驱散开关):
     """按 魔法 > 疾病 > 中毒 的顺序找一个需要驱散的队友。"""
     if not 驱散开关:
@@ -150,7 +183,10 @@ def _pick_dispel_unit(state_dict, 驱散开关):
         unit, _ = get_unit_with_dispel_type(state_dict, dispel_type)
         if unit is not None:
             return unit
-    return None
+    # 战斗中光环数据受限（secret），读不到减益的具体类型，
+    # Lua 侧会写 5（未知但确实有减益）-> 这里盲驱血量最低的队友。
+    unit, _ = _pick_unknown_dispel_unit(state_dict)
+    return unit
 
 
 def run_paladin_logic(state_dict, spec_name):
@@ -351,7 +387,7 @@ def run_paladin_logic(state_dict, spec_name):
                 current_step = "审判"
                 action_hotkey = get_hotkey(0, "审判")
             # 奉献：身边 ≥2 个才放（5 码内敌人数，不是全场人数）
-            elif 奉献CD == 0 and 五码敌人 >= 2 and 能量值 >= 50 and not 移动:
+            elif 奉献CD == 0 and 五码敌人 >= 2 and 能量值 >= 40 and not 移动:
                 current_step = "奉献"
                 action_hotkey = get_hotkey(0, "奉献")
             elif 神圣打击CD == 0 and _in_melee(目标距离, 5):

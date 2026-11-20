@@ -45,6 +45,17 @@ function CyberDeck:CreatTexture(i, b)
     end
 end
 
+-- 取色条第 i 格的位置与尺寸（引擎染色探针要用：把纹理精确盖在那一格上）
+function CyberDeck:GetColorBarCellRect(i)
+    if not i or i <= 0 or i > BLOCK_FIX_CONFIG.blockCount then return nil end
+    return {
+        x = GetXOffset(i - 1, BLOCK_FIX_CONFIG.blockWidth, BLOCK_FIX_CONFIG.blockSpacing),
+        y = 0,
+        w = BLOCK_FIX_CONFIG.blockWidth,
+        h = BLOCK_FIX_CONFIG.blockHeight,
+    }
+end
+
 function CyberDeck:clearAllTextures()
     for i = 1, BLOCK_FIX_CONFIG.blockCount do
         self:CreatTexture(i, 0)

@@ -9,9 +9,9 @@ import time
 
 from utils import get_hotkey
 
-# 牧师驱散能力：1 魔法（驱散魔法）/ 3 疾病（驱除疾病）
-# 经典牧师：驱散魔法(527) 驱魔法；驱除疾病(552) 驱疾病
-DISPEL_TYPES = (1, 2, 3)
+# 牧师驱散能力：1 魔法（驱散魔法 527）/ 3 疾病（祛病术 988、驱除疾病 552）
+# 经典牧师没有解诅咒技能（解除次级诅咒 475 是法师系的）
+DISPEL_TYPES = (1, 3)
 
 # 治疗阈值
 HEAL_PANIC = 35      # 危急血量
@@ -146,6 +146,39 @@ def _reset_upkeep():
     _upkeep_state.clear()
 
 
+def _pick_unknown_dispel_unit(state_dict):
+    """受限降级：在「驱散字段 = 5（未知）」的队友里挑血量最低的。
+
+    战斗中光环数据受限，读不到减益的具体类型，Lua 侧会给所有队友写 5。
+    这里只能盲驱 —— 挑血量最低的，因为他最可能身上有减益。
+    驱动散技能只会移除它能驱的类型，队友没减益时这一下是空放。
+    """
+    group = state_dict.get("group") or {}
+    best = None
+    best_pct = None
+    for key, data in group.items():
+        if not isinstance(data, dict):
+            continue
+        if str(data.get("驱散")) != "5":
+            continue
+        role = data.get("职责")
+        try:
+            if role is not None and int(role) == 0:
+                continue
+        except (TypeError, ValueError):
+            pass
+        pct = data.get("生命值")
+        try:
+            pct = int(pct) if pct is not None else 100
+        except (TypeError, ValueError):
+            pct = 100
+        if best_pct is None or pct < best_pct:
+            best, best_pct = key, pct
+    if best is None:
+        return None, None
+    return best, group.get(best)
+
+
 def _pick_dispel_unit(state_dict, 驱散开关, types):
     """挑一个需要驱散（且自己会驱）的队友。
 
@@ -159,6 +192,11 @@ def _pick_dispel_unit(state_dict, 驱散开关, types):
         slot, data = get_unit_with_dispel_type(state_dict, t)
         if slot:
             return slot, data
+    # 战斗中光环数据受限（secret），读不到减益的具体类型，
+    # Lua 侧会写 5（未知但确实有减益）-> 这里盲驱血量最低的队友。
+    slot, data = _pick_unknown_dispel_unit(state_dict)
+    if slot:
+        return slot, data
     return None, None
 
 
@@ -180,16 +218,17 @@ def run_priest_logic(state_dict, spec_name):
     ctx = Ctx(state_dict, spec_name)
     spec = ctx.spec
 
-    if not ctx.in_combat:
-        return None, "脱战", {}
-
     # -- 驱散（牧师是驱散主力）--
+    # 战斗和脱战都驱：脱战时驱散是战前清理（队友身上的减益还没过期）
     slot, _ = _pick_dispel_unit(state_dict, ctx.dispel_switch, DISPEL_TYPES)
     if slot:
-        for sk in ("驱散魔法", "祛病术", "驱除疾病"):
+        for sk in ("驱散魔法", "祛病术"):
             hk = _skill(ctx, sk, int(slot))
             if hk:
                 return hk, "%s on %s" % (sk, slot), {"unit": slot}
+
+    if not ctx.in_combat:
+        return None, "脱战", {}
 
     # -- 暗影专精：输出 --
     if spec == "暗影":

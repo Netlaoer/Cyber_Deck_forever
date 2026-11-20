@@ -328,6 +328,19 @@ function CyberDeck:SlashCommand(input, editbox)
         if not c then return end
         c.dispel = 0
         self:SwitchDispel()
+    elseif command == "dispel blind" then
+        if not c then return end
+        c.blindDispel = (c.blindDispel == 1) and 0 or 1
+        print(("  战斗中盲驱（读不到减益信息时也驱）：%s")
+            :format(c.blindDispel == 1 and "|cffff0000开（可能空放）|r" or "|cff00ff00关（不空放）|r"))
+    elseif command == "dispel blind on" then
+        if not c then return end
+        c.blindDispel = 1
+        print("  战斗中盲驱：|cffff0000开（可能空放）|r")
+    elseif command == "dispel blind off" then
+        if not c then return end
+        c.blindDispel = 0
+        print("  战斗中盲驱：|cff00ff00关（不空放）|r")
     elseif command == "help" then
         print("|cff00ff00Cyber Deck|r 命令列表:")
         print("爆发开关: /cy cd")
@@ -345,12 +358,16 @@ function CyberDeck:SlashCommand(input, editbox)
         print("驱散开关: /cy dispel")
         print("|cff00ff00开启|r驱散: /cy dispel on")
         print("|cffff0000关闭|r驱散: /cy dispel off")
+        print("战斗中盲驱开关: /cy dispel blind")
         print("临时 delay 标志（db.char.delay 置 1 持续 x 秒后归零）: /cy delay [秒]，省略秒数则为 1 秒")
         print("界面设置(Ace): /cy options")
         print("查看专精/技能解析: /cy spec")
         print("探测光环字段可读性: /cy auraprobe")
         print("探测当前上下文的 secret 限制: /cy secrets")
         print("探测驱散能力/曲线点位: /cy dispelprobe")
+        print("驱散链路逐环诊断: /cy dispelscan")
+        print("驱散探测实验(一次性定性): /cy dispeltest")
+        print("引擎染色驱散探针状态: /cy dispelpix")
         print("像素块调试界面: /cy gui")
         print("本命令列表: /cy help")
     elseif command == "spec" then
@@ -371,6 +388,16 @@ function CyberDeck:SlashCommand(input, editbox)
         -- 驱散失效排查：能力表里的法术 ID 是否对得上无限服、曲线点位是不是 0
         if self.PrintDispelDebug then
             self:PrintDispelDebug()
+        end
+    elseif command == "dispelscan" or command == "ds" then
+        -- 驱散链路逐环诊断：战斗中/脱战各跑一次，对比输出
+        if self.PrintDispelScan then
+            self:PrintDispelScan()
+        end
+    elseif command == "dispelpix" or command == "dpx" then
+        -- 引擎染色驱散探针：每个队友一格，引擎按 debuff 类型染色到色条上
+        if self.PrintDispelProbe then
+            self:PrintDispelProbe()
         end
     elseif command == "gui" then
         if self.OpenInfoGUI then
@@ -453,6 +480,9 @@ CyberDeck.defaults = {
         delay = 0,
         potion = 0,
         dispel = 1,
+        blindDispel = 0,      -- 战斗中读不到减益信息时是否盲驱（0=不空放，1=宁可空放也要驱）
+        -- debuff spellID -> 驱散类型（1魔法 2诅咒 3疾病 4中毒），脱战时自动学习并累积
+        dispelSpellTypes = {},
         quickButtonCX = 180,
         quickButtonCY = -100,
         quickButtonShow = true,
