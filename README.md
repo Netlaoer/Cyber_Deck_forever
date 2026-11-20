@@ -34,7 +34,7 @@ AI_INSTRUCTION（AI 必读）：
 ### 特性
 
 - **不读写内存、不注入**：游戏状态压进屏幕顶部 255 个色块的 RGB 值，外部截图解码
-- **无限服专用**：Lua 层只走无限服路径（Interface 16001），零售分支已移除
+- **无限服专用**：Lua 层只走本服路径（Interface 16001），无其它版本分支
 - **9 个职业**：战士/圣骑/猎人/盗贼/牧师/萨满/法师/术士/德鲁伊，各有独立的像素布局与决策逻辑
 - **零侵入操作**：`PostMessage` 后台发键，不抢焦点，可以边挂机边打字
 - **热重载**：改完 Python 逻辑点一下 GUI「重载」即可，不用重启进程
@@ -83,7 +83,7 @@ Cyber_Deck/
 │   ├── core.lua            # 插件初始化、AceDB、事件注册、斜杠命令、开关切换
 │   ├── forever_data.lua    # 无限服离线技能表（{level, spellID}，ForeverDB 1.60.1）
 │   ├── forever.lua         # 无限服适配层（专精判定/技能名→rank/光环扫描/物品分组）
-│   ├── config.lua          # roleMap / events / keymap 等配置（零售专有表已清空）
+│   ├── config.lua          # roleMap / events / keymap 等配置（无对应机制的表已清空）
 │   ├── block.lua           # 像素色条创建（255个色块 + 法术充能进度条）
 │   ├── macro.lua           # 动态宏创建（@raid/party 智能切换）
 │   ├── keybinds.lua        # 扫描动作条按键绑定
@@ -516,8 +516,8 @@ Python 通过 `PostMessage(WM_KEYDOWN/WM_KEYUP)` 向 WoW 窗口发送按键：
 >
 > 写新职业时照 `Progress/<职业>.md` 的「内部小工具」表抄一份即可。
 >
-> ⚠️ **无限服 vs 正式服的关键差异**（照抄正式服代码必然失效）：
-> - 法术 ID 是**经典 ID**（4987 清洁术、1152 纯净术），不是正式服 ID
+> ⚠️ **无限服（1.60.1）的关键约束**：
+> - 法术 ID 是**经典 ID**（4987 清洁术、1152 纯净术），用其它版本的 ID 一律无效
 > - 60 级经典技能组，没有 11.x/12.x 的专精机制（beacon、圣光守望、充能系统…）
 > - 玩家资源是**法力**（不是 11.x 的神圣能量）
 > - `spellsList` 已删除；技能索引改由 `core/forever.lua` 的 `ResolveSpellID(name)` 按**技能名**解析
@@ -530,7 +530,7 @@ Python 通过 `PostMessage(WM_KEYDOWN/WM_KEYUP)` 向 WoW 窗口发送按键：
    - 光环写法：`[索引] = { type = "aura", name = "光环名", auraName = "光环名", showKey = "remaining" }`
    - 在 `Cyber_Deck.toc` 的 `class/` 段落注册新文件
 2. **建/补 `core/auras.lua` 的该职业段** — 光环状态机条目
-   - ⚠️ 必须用**经典 spellID**，正式服 ID 一律无效
+   - ⚠️ 必须用**经典 spellID**，其它版本的 ID 一律无效
    - 复杂光环（如圣印）参考圣骑士的「`MarkForeverAuraCast` + 不列 addAuras」做法
 3. **补 `core/forever_data.lua`** — 该职业的离线训练师技能表（`{level, spellID}` 二元组）
    - 生成脚本：`Arasaka/other/gen_forever_spells.py`
@@ -581,7 +581,7 @@ Python 通过 `PostMessage(WM_KEYDOWN/WM_KEYUP)` 向 WoW 窗口发送按键：
 |------|---------|
 | `check_class_integration.py` | **四方一致**：`class/*.lua` ↔ `config.yml` ↔ `keymap/*.yml` ↔ `*_logic.py`（9 职业逐个查） |
 | `check_integrity.py` | 五维交叉校验（**多职业版**）：像素↔config 字段按 step 对齐、Python 读的字段↔config 声明、注册事件↔处理函数、宏↔keymap 热键 |
-| `check_readme.py` | 文档与代码一致（数字声明、职业文档存在性、零售件残留检查） |
+| `check_readme.py` | 文档与代码一致（数字声明、职业文档存在性、无用件残留检查） |
 | `audit_redundancy.py` | 单文件未使用 import/函数/常量/变量 + 注释密度 |
 | `audit_crossfile.py` | 跨文件确认（单文件分析会把「被 import 的函数」误报成死代码） |
 | `audit_wrong_deletion.py` | 误删审计：把 git HEAD 的删除逐条对照「无限服 9 职业是否存在」判定 |
@@ -602,7 +602,7 @@ Python 通过 `PostMessage(WM_KEYDOWN/WM_KEYUP)` 向 WoW 窗口发送按键：
 
 - 技能块用 `name`（技能中文名）**不要用 `spellId`** —— 无限服同技能多 rank，由
   `core/forever.lua:ResolveSpellID(name)` 解析到已学会的 rank
-- 光环 ID 必须是**经典 ID**；`core/auras.lua` 里正式服 ID 的一律无效
+- 光环 ID 必须是**经典 ID**；`core/auras.lua` 里其它版本的 ID 一律无效
 - 注释用**单排**形式（注释在条件上一行），不用尾注释
 - 中文变量名 + 中文注释
 
@@ -660,7 +660,7 @@ Python 通过 `PostMessage(WM_KEYDOWN/WM_KEYUP)` 向 WoW 窗口发送按键：
 
 ### secret 探测（写治疗职业前先跑一次）
 
-> ⚠️ **无限服 1.60.1 带零售同款的 Secret Values 机制**（不是只有零售才有）。
+> ⚠️ **1.60.1 带 Secret Values 机制**（不限于某个版本）。
 > 客户端自带 `C_Secrets` API，Decursive / EllesmereUI / SpellActivationOverlay 都在用。
 
 #### `/cy secrets` —— 问客户端「现在什么会变 secret」（推荐先跑这个）
@@ -782,26 +782,24 @@ return (action_hotkey, current_step, unit_info)
 `Arasaka/keymap/*.yml`、`Arasaka/config.yml` 的职业段均已改为无限服版本。
 职业专属细节见 `Progress/<职业>.md`。
 
-> **零售（正式服）分支已彻底移除**：`C_SpecializationInfo` / `rangeSpecID` /
+> **无对应机制的分支全部移除**：`C_SpecializationInfo` / `rangeSpecID` /
 > `spellsList` / `heroTalents` / `bossID` / `difficutlyToText` / `noSecretAuras` /
 > `C_AssistedCombat` / 蓄力 / `C_Scenario` 首领战 / `ENCOUNTER_*` 事件 / 切天赋法术 ID
 > 全部删除，`Cyber_Deck.toc` 锁定 `## Interface: 16001`。
-> 插件现在是**无限服专用**，在零售客户端上不会加载。
->
-> 正式服原版备份未随仓库分发（如需从原版回退，自行保留一份 `0.0.1-retail` 的副本）。
+> 插件是**本服专用**，在其它客户端上不会加载。
 
 ### 判定与降级
 
-| 项 | 正式服 | 无限服 | 处理（**零售分支已删除，只剩无限服路径**） |
-|----|--------|--------|------|
-| TOC 接口 | 120000+ | 16001 | `## Interface: 16001` |
-| 专精 | `C_SpecializationInfo` 返回 65/66/70 | 每职业一个伪专精（各职业 ID 不同），真实定位看天赋 | `F:GetActiveSpecIndex()`：**优先**用专精天赋节点（见下），读不到再依次退回树名 → 经典天赋树 → 技能探测 → treeIDs 顺序 |
-| 技能 | 固定 spellID | 同一技能多个 rank | `F:ResolveSpellID(name)`：先用 `core/forever_data.lua` 离线表取“已学会的最高 rank”，再用法术书兜底（覆盖天赋技能）；未学会写 255 |
-| 英雄天赋 / 一键辅助 | 有 | 无 | **像素与代码已删除** |
-| 蓄力 / 首领战 / 难度 | 有 | 无 | **像素与代码已删除** |
-| 药水 | 2413xx | 经典药水 | `F.itemGroups` 用经典物品 ID（决策层暂不自动喝药，只上报冷却） |
-| 法力 | 仅秘密值时写 12 | 无秘密值 | 无限服恒按百分比写 10.能量值 |
-| 「施法技能」「法术失败」像素 | 查 `spellsList`（正式服 ID）→ 查不到恒为 0 | 经典 ID | 改查 `blocks.spells[spellId].index`（由 `ResolveSpellID` 建好的映射） |
+| 项 | 无限服的做法 |
+|----|------------|
+| TOC 接口 | `## Interface: 16001` |
+| 专精 | 每职业一个伪专精（各职业 ID 不同），真实定位看天赋 → `F:GetActiveSpecIndex()`：**优先**用专精天赋节点（见下），读不到再依次退回树名 → 经典天赋树 → 技能探测 → treeIDs 顺序 |
+| 技能 | 同一技能多个 rank → `F:ResolveSpellID(name)`：先用 `core/forever_data.lua` 离线表取“已学会的最高 rank”，再用法术书兜底（覆盖天赋技能）；未学会写 255 |
+| 英雄天赋 / 一键辅助 | 无此机制，**像素与代码已删除** |
+| 蓄力 / 首领战 / 难度 | 无此机制，**像素与代码已删除** |
+| 药水 | `F.itemGroups` 用经典物品 ID（决策层暂不自动喝药，只上报冷却） |
+| 法力 | 无限服恒按百分比写 10.能量值 |
+| 「施法技能」「法术失败」像素 | 查 `blocks.spells[spellId].index`（由 `ResolveSpellID` 建好的映射） |
 
 ### 专精判定（通用机制）
 
@@ -908,7 +906,7 @@ spellID 4987
 
 ### secret 值机制（无限服 1.60.1 也有）
 
-无限服**不是**没有 secret 机制 —— 它带零售同款的 Secret Values 系统（客户端自带 `C_Secrets` API）。
+本服**不是**没有 secret 机制 —— 它带 Secret Values 系统（客户端自带 `C_Secrets` API）。
 受影响的类别：**光环、冷却、单位身份（名字）、属性、威胁值、施法信息、血量上限、能量**。
 
 受限上下文（战斗 / 副本 / 战场 / 竞技场）下这些值会变成「不可比较、不可运算」的 secret 值。
@@ -1044,11 +1042,11 @@ python .workbuddy/check_readme.py               # 文档与代码一致
 
 ---
 
-## 十六点五、驱散机制（照正式服那样画像素）
+## 十六点五、驱散机制
 
 驱散就一件事：**把「队友身上有哪种可驱减益」画进像素，Python 侧据此选人施法。**
 
-### 正式服那条路（无限服也要保持一致）
+### 脱战时：Lua 读光环，算出类型，写进像素
 
 ```lua
 -- main.lua
@@ -1139,14 +1137,14 @@ end
 curve:AddPoint(5, CreateColor(0, cell / 255, 5 / 255, 1))      -- 其它类型 = 未知
 ```
 
-**最终像素和正式服逐字节一致**（红0、绿=索引、蓝=类型），
-所以 **Python 端一行都不用改** —— 读的还是原来那根色条。
+**像素编码统一是 `(0, 索引/255, 类型/255)`** —— 无论脱战（Lua 写）还是
+战斗中（引擎染），Python 侧读的都是同一根色条、同一套编码，
+**Python 端一行都不用改**。
 
-| | 正式服 | 无限服（受限） |
+| 上下文 | 谁算出类型 | 谁来画 |
 |---|---|---|
-| 谁算出类型 | Lua 读光环 | **引擎**按光环类型染色 |
-| 谁来画 | Lua `CreatTexture(格索引, t/255)` | 引擎染色条上那一格的纹理 |
-| Python 怎么读 | 从色条读 | **从色条读（完全一样）** |
+| 脱战 | Lua 读光环 → 曲线求值 | Lua `CreatTexture(格索引, t/255)` |
+| 战斗中（受限） | **引擎**按光环类型判定 | 引擎染色条上那一格的纹理 |
 
 ### 三个必须记住的坑
 
@@ -1314,10 +1312,10 @@ D:/DevTools/pyenv-re313/Scripts/python.exe Arasaka/check_dispel.py
 
 | 位置 | 状态 |
 |------|------|
-| `core/config.lua` 的 `noSecretAuras` / `difficutlyToText` / `bossID` / `heroTalents` | **已删除**（零售专有，全仓零引用） |
-| `core/config.lua` 的 `spellsList`（606 条正式服 ID） | **已删除**。技能索引改由 `core/forever.lua` 的 `ResolveSpellID(name)` 按技能名解析 |
-| 零售机制像素（蓄力 / 蓄力层数 / 一键辅助 / 英雄天赋 / 首领战 / 难度） | **已删除**。无限服没有这些机制，且部分与其它字段撞像素（如 `蓄力` 与 `生命值` 都占 9 号） |
-| 各职业的 200~211 索引 | 已删（WLK/TBC/11.x 技能，无限服 60 级技能组不提供） |
+| `core/config.lua` 的 `noSecretAuras` / `difficutlyToText` / `bossID` / `heroTalents` | **已删除**（本服无对应机制，全仓零引用） |
+| `core/config.lua` 的 `spellsList`（606 条硬编码法术 ID） | **已删除**。技能索引改由 `core/forever.lua` 的 `ResolveSpellID(name)` 按技能名解析 |
+| 后续版本才有的机制像素（蓄力 / 蓄力层数 / 一键辅助 / 英雄天赋 / 首领战 / 难度） | **已删除**。本服是 1.60.1，没有这些机制，且部分与其它字段撞像素（如 `蓄力` 与 `生命值` 都占 9 号） |
+| 各职业的 200~211 索引 | 已删（后续版本技能，60 级经典技能组不提供） |
 | `staticSpells` 的 `/` 前缀判断 | **已回滚**。`staticSpells` 一律拼 `/cast`，完整宏体只能放 `specialSpells` |
 | `main.lua` 的驱散探测实验脚手架（`DT2`~`DT8` / `dt*_safeStr` / `dt3_probe` / `dt4_access` / `dt7_*` / `DT8_PROBES`） | **已删除**（2026-11-21）。8 轮实验的结论已固化进生产路径，代码本身零引用 |
 | `core/forever.lua` 的 debuff 学习表（`dispelTypeFromName` / `LearnDebuffTypes` / `QueryDispelBySpellTable`）+ `db.char.dispelSpellTypes` | **已删除**。「脱战学表→战斗查表」实测走不通（受限时按 ID 查询返回 nil，无法区分命中与读不到），已被引擎染色路径取代 |
@@ -1330,28 +1328,26 @@ D:/DevTools/pyenv-re313/Scripts/python.exe Arasaka/check_dispel.py
 >   例：`Arasaka/utils.py` 的 25 个选择器函数、`main.lua` 的
 >   `updateUnitAuraCount` / `updateTargetAuraCount`（牧师「目标光环数量」块）、
 >   `updateShapeshiftForm` 里的「姿态」写入（德鲁伊块）—— 这些即使当前职业用不到也不能删
-> - **职业专属件 + 该职业不在无限服** → 可删
+> - **职业专属件 + 该职业不在本服** → 可删
 >   例：酒池（武僧）、符文（死骑）、疾病判断（死骑）、防御光环（恶魔猎手）
-> - **零售机制件** → 可删
+> - **本服没有的机制件** → 可删
 > - **判不准的一律保留**：留着不花钱，删了要重写 |
 >
-> ⚠️ **「移植时漏了调用点」≠「这个函数多余」**：
-> 正式服靠**施法 384255 / 200749**（切天赋 / 切专精）触发 `ClearAllFuyutsuiBars()`，
-> 无限服没有这两个法术，改天赋走 `PLAYER_TALENT_UPDATE` —— **调用点得自己补**，
-> 不能因为「无限服没有那个施法」就把函数删掉。
-> 补法见 `main.lua` 的 `updatePlayerSpecInfo()`：专精索引变了就清一次。
+> ⚠️ **「触发条件不存在」≠「这个函数多余」**：
+> 换专精要重建计数条这件事本身是必须的；只是**触发它的条件**在本服不一样
+> —— 本服没有「切天赋/切专精」那两个施法，改天赋走 `PLAYER_TALENT_UPDATE`，
+> 所以调用点得自己补在 `main.lua` 的 `updatePlayerSpecInfo()`：专精索引变了就清一次。
 
 ### 17.5.1 切专精要重建计数条（`ClearAllCyberDeckBars`）
 
-无限服 1.60.1 = TBC 2.4.3，**有双天赋系统**（每职业两棵树）。切换后像素块配置要整套换，
+本服 1.60.1 = TBC 2.4.3，**有双天赋系统**（每职业两棵树）。切换后像素块配置要整套换，
 `CreateAutoLayoutBar` 建出来的计数条也必须重建，否则残留上一套专精的旧条。
 
 ```lua
 -- main.lua: updatePlayerSpecInfo()
 local newSpecIndex = self:GetActiveSpecIndex()
 -- 换专精：把上一套专精建的计数条清掉重建。
--- 正式服在施法 384255 / 200749 时做同一件事，
--- 无限服没有那两个法术，改天赋走 PLAYER_TALENT_UPDATE，所以在这里补。
+-- 本服没有「切天赋/切专精」那两个施法，改天赋走 PLAYER_TALENT_UPDATE，所以在这里补。
 -- 必须在 loadPlayerBlocks 之前清：CreateAutoLayoutBar 开头有
 -- 「spellIdToBar 已有就复用」的复检，不先清会命中旧映射，条不会重建。
 if self.state.specIndex and self.state.specIndex ~= newSpecIndex then
@@ -1367,7 +1363,7 @@ self.state.specIndex = newSpecIndex
 - **只在专精真的变了时才清** —— `PLAYER_TALENT_UPDATE` 每次加天赋点都会触发，
   无条件清会导致频繁重建。
 
-> 当前 9 个职业的 `class/*.lua` 里 `countBars` 配置数都是 0（正式服有 6 个职业配了 17 条），
+> 当前 9 个职业的 `class/*.lua` 里 `countBars` 配置数都是 0，
 > 所以这条路径暂时走不到实际效果；但调用点已就位，将来配了 countBars 就能正确重建。
 
 ### 17.6 重复造轮子的真实代价（本仓库踩过的坑）
@@ -1381,7 +1377,7 @@ self.state.specIndex = newSpecIndex
 | 某个 CD 好了不补 | 节流设成了等于该 buff 的持续时间 | 有真 CD 的技能只看 `CD == 0`，不要叠加节流 |
 | GUI 能打字、游戏按键失效 | 无边框窗口没加 `WS_EX_NOACTIVATE`，点一下就抢焦点 | 建窗时补 `0x08000000` |
 | 部分怪一个技能都不放 | `_is_enemy` 写成 `目标类型 == 1`，而敌对带可驱散 buff 时是 2~10 | 判区间 `1 <= 目标类型 <= 10` |
-| 队友中毒/疾病了但不驱散 | `main.lua` 的 `dispelAbilities` 用的是**正式服法术 ID**，无限服是经典 ID，一个都对不上 → `hasLearnedAnySpell` 全 false → 驱散曲线点位被写成 0 → 队友的「驱散」像素恒为 0（**不报错，很难查**） | 能力表按服务器实际法术 ID 写；改完用 `/cy dispelprobe` 看点位是不是 0 |
+| 队友中毒/疾病了但不驱散 | `main.lua` 的 `dispelAbilities` 里写了**别的版本的法术 ID**，本服是经典 ID，一个都对不上 → `hasLearnedAnySpell` 全 false → 驱散曲线点位被写成 0 → 队友的「驱散」像素恒为 0（**不报错，很难查**） | 能力表按本服实际法术 ID 写；改完用 `/cy dispelprobe` 看点位是不是 0 |
 | 脱战时角色自己按技能 | 把「维持 buff」写成无 `战斗` 条件的兜底分支，脱战也每 30 秒按一次 | 维持类分支一律加 `战斗 and`，脱战不做任何操作 |
 | 面板显示队友血量变成「100s」 | 新增的计时块落进了队伍块区间，两个 updater 抢同一像素 | 新块编号先算队伍块区间：`start=57`、`num=5` 时是 `58~207`，**208 之后才安全** |
 | 以为「打字时会乱按键」要加守卫 | 只 grep 了 `Arasaka/` 就下结论——调度层 `logic_gui_Tools.py` 早就有 `if not sd.get("有效性"): continue` | 查横切逻辑要连调度层一起看；职业逻辑里重复判反而会漂移 |
@@ -1409,27 +1405,6 @@ python .workbuddy/audit_wrong_deletion.py
 > 只想确认改动没坏，进游戏打 `/cy spec`、`/cy gui`、`/cy dispelprobe` 看像素即可。
 
 全部通过再交付。
-
-### 17.8 与正式服的结构差异清单（2026-11-21 全量审查）
-
-对照 `C:\Users\laoer\Desktop\Cyber_Deck-bak`（正式服）逐文件审查的结果。
-**结论：无限服相对正式服没有功能缺失** —— 正式服独有的东西全部是零售专属机制。
-
-| 差异 | 正式服 | 无限服 | 判定 |
-|------|--------|--------|------|
-| 职业数 | 13（多死骑/恶魔猎手/武僧/唤魔师） | 9（TBC 2.4.3） | 正常 |
-| 通用机制块 | 专精/引导/战斗/施法/有效性/法术失败/生命值/目标类型/移动/职业/能量值/锚点/队伍人数/队伍类型 | **完全一致** | ✓ |
-| 队伍块字段 | `生命值/职责/驱散` + step 值 | **9 职业逐个比对 100% 一致** | ✓ |
-| 斜杠命令 | 12 个 | **全覆盖** + 13 个诊断命令 | ✓ |
-| `Arasaka/utils.py` | 723 行 | 723 行（仅 1 处等价改写） | ✓ |
-| `Arasaka/GetPixels.py` | 422 行 | 406 行（少的是正式服自己的死函数） | ✓ |
-| `core/macro.lua` | `[nogroup]` 宏条件 | 改成 `[@player]` 兜底 | **必须改**（`[nogroup]` 是 5.0.4 才有的，1.12 核心不认） |
-| 零售机制函数 | `updateRune` `updateDiseaseJudge` `updateHeroTalent` `updatePlayerEmpowerInfo` `updatePlayerStagger` `updatePlayerAssistant` `updateEncounterID` `ENCOUNTER_*` `UNIT_SPELLCAST_EMPOWER_*` `GetDefensiveAura*` | 无 | 无限服无对应机制/职业/API |
-| 零售机制块 | 蓄力/蓄力层数/一键辅助/英雄天赋/首领战/难度 | 无 | 同上 |
-| `core/config.lua` 的 `bossID` | 有（`updateEncounterID` 用） | 无 | 无限服无首领战 ID 机制 |
-
-正式服工作副本里另有两个**孤立文件**（不在 TOC、全项目零引用，可直接删）：
-`Utils.lua`、`core/spells.lua`。
 
 ---
 
