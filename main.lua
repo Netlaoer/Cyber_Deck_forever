@@ -171,14 +171,13 @@ end
 -- ================================================================
 -- 光环受限（secret）适配
 --
--- 无限服 = Decursive 里的 DC.FOREVER（见 Decursive 的 DC.RESTRICTED_AURAS）。
 -- 战斗中 / 首领战中，队友身上的负面光环「类型」读不到：
 -- GetAuraDispelTypeColor 返回黑色（color.b = 0），
 -- 于是「驱散」像素写 0 -> 决策层永远找不到要驱散的人。
 -- Decursive 的做法是受限时干脆不读光环（见它的 AurasRestricted）。
 --
--- 这里改成：受限时读「有几个负面光环」，把类型写成 5（未知但确实有），
--- 由决策层降级成「按优先级盲驱第一个队友」。
+-- 这里的解法：**受限时那一格根本不写**，改由引擎把 debuff 类型
+-- 直接染上去（见 UpdateDispelProbeUnit）；Python 侧照旧从色条读。
 -- ================================================================
 
 -- 驱散类型编号：1=魔法 2=诅咒 3=疾病 4=中毒 5=未知(有减益但类型读不到) 11=流血
@@ -219,15 +218,6 @@ local function aurasRestricted()
     if UnitAffectingCombat("player") then return true end
     if UnitInBossCombat and UnitInBossCombat() then return true end
     return false
-end
-
--- 「战斗中宁可空放也要驱」开关（/cy dispel blind on/off）
--- 读不到任何 debuff 信息时的取舍：
---   关（默认）-> 不驱散，避免队友没减益还一直按驱散键
---   开        -> 盲驱血量最低的队友，宁可空放也不漏驱
-local function blindDispelEnabled()
-    local c = CyberDeck.db and CyberDeck.db.char
-    return c and c.blindDispel == 1
 end
 
 -- 遍历光环列表，找第一个「玩家能驱散」的（曲线求值非零）
@@ -1797,10 +1787,6 @@ local function getAuraDispelTypeColor(unit)
     if st == "受限" then
         -- 读不到（战斗中光环被 secret 化）：**不写这一格**。
         -- 引擎会把 debuff 类型直接染到这一格上，写 0 会盖掉它。
-        -- 只有开了「战斗中宁可空放也要驱」开关才写 5（未知）走盲驱。
-        if blindDispelEnabled() then
-            CyberDeck:CreatTexture(index, DISPEL_TYPE_UNKNOWN / 255)
-        end
         return
     end
     CyberDeck:CreatTexture(index, t and t / 255 or 0)

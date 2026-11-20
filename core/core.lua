@@ -328,19 +328,6 @@ function CyberDeck:SlashCommand(input, editbox)
         if not c then return end
         c.dispel = 0
         self:SwitchDispel()
-    elseif command == "dispel blind" then
-        if not c then return end
-        c.blindDispel = (c.blindDispel == 1) and 0 or 1
-        print(("  战斗中盲驱（读不到减益信息时也驱）：%s")
-            :format(c.blindDispel == 1 and "|cffff0000开（可能空放）|r" or "|cff00ff00关（不空放）|r"))
-    elseif command == "dispel blind on" then
-        if not c then return end
-        c.blindDispel = 1
-        print("  战斗中盲驱：|cffff0000开（可能空放）|r")
-    elseif command == "dispel blind off" then
-        if not c then return end
-        c.blindDispel = 0
-        print("  战斗中盲驱：|cff00ff00关（不空放）|r")
     elseif command == "help" then
         print("|cff00ff00Cyber Deck|r 命令列表:")
         print("爆发开关: /cy cd")
@@ -358,7 +345,6 @@ function CyberDeck:SlashCommand(input, editbox)
         print("驱散开关: /cy dispel")
         print("|cff00ff00开启|r驱散: /cy dispel on")
         print("|cffff0000关闭|r驱散: /cy dispel off")
-        print("战斗中盲驱开关: /cy dispel blind")
         print("临时 delay 标志（db.char.delay 置 1 持续 x 秒后归零）: /cy delay [秒]，省略秒数则为 1 秒")
         print("界面设置(Ace): /cy options")
         print("查看专精/技能解析: /cy spec")
@@ -479,7 +465,6 @@ CyberDeck.defaults = {
         delay = 0,
         potion = 0,
         dispel = 1,
-        blindDispel = 0,      -- 战斗中读不到减益信息时是否盲驱（0=不空放，1=宁可空放也要驱）
         quickButtonCX = 180,
         quickButtonCY = -100,
         quickButtonShow = true,

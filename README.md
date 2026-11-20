@@ -260,7 +260,6 @@ char = { level, aoeMode, cooldowns, dpsMode, delay, potion,
 | `/cy potion` / `on` / `off` | 切换/开启/关闭爆发药水 |
 | `/cy delay [秒]` | 临时延迟逻辑（默认 1 秒） |
 | `/cy dispel` / `on` / `off` | 切换/开启/关闭驱散 |
-| `/cy dispel blind` / `on` / `off` | 战斗中读不到减益信息时的取舍：**关**=不空放（默认）、**开**=宁可空放也要驱 |
 | `/cy gui` | 打开像素块调试界面 |
 | `/cy spec` | 打印专精判定过程、招牌技能探测、离线技能表 |
 | `/cy auraprobe` / `ap` | 探测哪些光环字段被 secret 保护 |
@@ -1072,9 +1071,6 @@ local function getAuraDispelTypeColor(unit)
     if st == "受限" then
         -- 读不到（战斗中光环被 secret 化）：**不写这一格**。
         -- 引擎会把 debuff 类型直接染到这一格上，写 0 会盖掉它。
-        if blindDispelEnabled() then
-            CyberDeck:CreatTexture(index, DISPEL_TYPE_UNKNOWN / 255)
-        end
         return
     end
     CyberDeck:CreatTexture(index, t and t / 255 or 0)
