@@ -120,7 +120,7 @@
 > 写错的后果：`hasLearnedAnySpell` 全 false → 曲线点位被写成 0 → 队友的「驱散」像素恒为 0
 > → Python 永远匹配不到人 → **驱散永不触发**（且不报错，很难查）。
 >
-> 改完用 `/cy dispelprobe` 验证：类型 1/3/4 的点位应非 0，类型 2 应显示「检测不到」。
+> 改完用 `/cy gui` 看驱散格的像素值：类型 1/3/4 应非 0，类型 2（诅咒）本服不可达。
 >
 > ⚠️ **战斗中光环数据会受限（secret）** —— 无限服 = Decursive 里的 `DC.FOREVER`。
 > 战斗 / 首领战中 `GetAuraDispelTypeColor` 返回黑色，减益类型读不到，
@@ -448,7 +448,7 @@ python Arasaka/other/query_forever.py 4987
 - **误删审计**（`.workbuddy/audit_wrong_deletion.py`）：git HEAD 的每处删除都对照
   「无限服 9 职业是否存在」判定过；
 - 游戏内 `/cy spec` 看专精/点数/解析到的 spellID，`/cy gui` 核对像素，
-  `/cy dispelprobe` 看驱散点位，`/cy secrets` 看当前上下文的 secret 限制。
+  `/cy gui` 看驱散格的像素值，`/cy secrets` 看当前上下文的 secret 限制。
 
 ---
 

@@ -38,7 +38,7 @@ AI_INSTRUCTION（AI 必读）：
 - **9 个职业**：战士/圣骑/猎人/盗贼/牧师/萨满/法师/术士/德鲁伊，各有独立的像素布局与决策逻辑
 - **零侵入操作**：`PostMessage` 后台发键，不抢焦点，可以边挂机边打字
 - **热重载**：改完 Python 逻辑点一下 GUI「重载」即可，不用重启进程
-- **可观测**：`/cy gui` 看像素原始值、`/cy spec` 看专精/技能解析、`/cy auraprobe` 探测哪些光环字段被 secret 保护、`/cy dispelprobe` 看驱散点位、`/cy dispelscan` 逐环诊断驱散链路、`/cy dispelpix` 看引擎染色探针状态
+- **可观测**：`/cy gui` 看像素原始值、`/cy spec` 看专精/技能解析、`/cy secrets` 看当前上下文的 secret 限制
 
 ### 快速开始
 
@@ -249,7 +249,7 @@ char = { level, aoeMode, cooldowns, dpsMode, delay, potion,
 | `updateAura()` | auras.lua | 光环倒计时 |
 | `updateAuraBlocks()` | auras.lua | 光环像素更新 |
 
-**斜杠命令**：`/cy help / cd / aoemode / potion / dispel / delay / gui / spec / auraprobe / dispelprobe / options / message`（完整表见「十四、调试技巧」）
+**斜杠命令**：`/cy help / cd / aoemode / potion / dispel / delay / gui / spec / secrets / options / message`（完整表见「十四、调试技巧」）
 
 完整命令列表：
 
@@ -262,10 +262,6 @@ char = { level, aoeMode, cooldowns, dpsMode, delay, potion,
 | `/cy dispel` / `on` / `off` | 切换/开启/关闭驱散 |
 | `/cy gui` | 打开像素块调试界面 |
 | `/cy spec` | 打印专精判定过程、招牌技能探测、离线技能表 |
-| `/cy auraprobe` / `ap` | 探测哪些光环字段被 secret 保护 |
-| `/cy dispelprobe` | 打印 4 种驱散类型的命中法术、曲线点位、各单位可驱散减益条数 |
-| `/cy dispelscan`（`/cy ds`） | **驱散链路逐环诊断**：受限状态 / 玩家能驱的类型 / 每个 debuff 的 spellId 与 dispelName / 曲线求值 / 驱散像素索引 |
-| `/cy dispelpix`（`/cy dpx`） | **引擎染色探针状态**：每个队友占色条第几格、容器建起来没 |
 | `/cy options` / `config` | 打开 Ace3 选项界面 |
 | `/cy message <文本>` | 聊天框测试 |
 | `/cy help` | 打印帮助信息 |
@@ -640,9 +636,7 @@ Python 通过 `PostMessage(WM_KEYDOWN/WM_KEYUP)` 向 WoW 窗口发送按键：
 | `/cy delay [秒]` | 临时暂停决策 N 秒（默认 1 秒，用于手动插技能） |
 | `/cy gui` | 像素块调试界面 |
 | `/cy spec` | 专精判定 / 技能解析 / 招牌技能探测三态 / 各技能 CD |
-| `/cy auraprobe`（`/cy ap`） | 光环字段可读性探测（逐字段试读），见下方 |
 | `/cy secrets`（`/cy sec`） | secret 上下文探测（问客户端 `C_Secrets` 谓词），见下方 |
-| `/cy dispelprobe`（`/cy dp`） | 驱散能力探测：4 种类型的命中法术 / 曲线点位 / 各单位可驱散减益条数 |
 | `/cy options` / `/cy config` | Ace3 选项面板 |
 | `/cy enable` / `/cy disable` | Ace3 启用/停用插件本体 |
 | `/cy macro` | 打印当前宏列表 |
@@ -690,40 +684,6 @@ Python 通过 `PostMessage(WM_KEYDOWN/WM_KEYUP)` 向 WoW 窗口发送按键：
 
 **用法**：脱战跑一次 `/cy secrets`，战斗中再跑一次，**对比两组的差异**——
 差异项就是「战斗中会变 secret」的部分。写完新职业后对着这个清单检查你的读取路径。
-
-#### `/cy auraprobe` —— 逐字段试读
-
-无限服的 secret 机制会让部分光环字段在战斗中变成不可比较的值。`/cy auraprobe` 逐字段试读，
-输出 `name / spellId / expirationTime / applications` 各自能不能用：
-
-示例输出（数值仅示意格式，实际以游戏内为准）：
-
-```
-[Cyber Deck] 光环可读性探测 [战斗中]
-[player] 8 条  name 8/8  spellId 8/8  时间 6/8  层数 8/8
-  圣印             spell=21084  name=ok     remain=24.3  stack=-
-  正义之怒          spell=25780  name=ok     remain=-     stack=-
-  party1 减益条数（HARMFUL|RAID）= 2
-[target 怪名 我放的 debuff] 2 条  name 2/2  spellId 2/2  时间 2/2
-  审判             spell=20271  name=ok     remain=8.0
-  十字军圣印        spell=21082  name=ok     remain=12.5
-```
-
-最后一段走 `HARMFUL|PLAYER`（"我施加的 debuff"专用 filter），
-和玩家自身 buff 的 `HELPFUL` 是两条独立通道。`getTargetDispelType()` 一直在用这条路径，
-所以它至少能拿到**数量和驱散类型**；名字和剩余时间在战斗中是否也被保护，跑一次看这一段的
-`name x/y` 与 `时间 x/y` 即可确认。
-
-判断依据：
-
-| 现象 | 含义 |
-|------|------|
-| `name=ok` | 可以直接按名字匹配（最省事） |
-| `name=SECRET` 但 `spellId=ok` | 按 spellID 匹配 |
-| 两个都 `SECRET` | 只能用 `auraInstanceID` 集合或 filter 计数 |
-| `remain=SECRET` | 只知道"有"，不知道"还剩多久" |
-
-写新职业时先跑这个，再决定像素块怎么设计——别先写逻辑再猜能不能读到。
 
 ---
 
@@ -1191,13 +1151,7 @@ dynamicSpells = { "驱散魔法", "祛病术" },   -- ✓ 按队友施放
 | 法师 | `(2,)` | 解除次级诅咒 475（诅咒） |
 | 战士 / 猎人 / 盗贼 / 术士 | `()` | 无驱散技能 |
 
-### 排查顺序
-
-```bash
-/cy dispelpix       # 引擎染色探针：每个槽位指向谁、色条第几格、AddAuraSlot 成功没
-/cy dispelscan      # 驱散链路逐环诊断（战斗中跑一次，脱战再跑一次对比）
-/cy dispelprobe     # 驱散能力探测（点位 = 写进像素的驱散类型）
-```
+### 排查
 
 **Python 侧一键诊断**（读真实像素，直接告诉你卡在哪一环）：
 
@@ -1211,10 +1165,7 @@ D:/DevTools/pyenv-re313/Scripts/python.exe Arasaka/check_dispel.py
 
 | 看什么 | 说明什么 |
 |--------|---------|
-| 探针的 `AddAuraSlot=失败` | 模板没加载（坑 ①） |
 | group 某格 `驱散=0` 但身上明明有 debuff | 引擎没染色 / 纹理被压黑（坑 ②） |
-| 「受限状态：是」 | 战斗中光环数据受限 → 只能靠引擎染色这条路 |
-| 「类型N：会/不会」 | 玩家会不会驱这一类 —— 「不会」说明能力表或已学会判定有问题 |
 | `action_hotkey=None` | 决策层没给动作 → 看 group 字段和技能 CD |
 
 ---
@@ -1316,7 +1267,7 @@ D:/DevTools/pyenv-re313/Scripts/python.exe Arasaka/check_dispel.py
 | `main.lua` 的驱散探测实验脚手架（`DT2`~`DT8` / `dt*_safeStr` / `dt3_probe` / `dt4_access` / `dt7_*` / `DT8_PROBES`） | **已删除**（2026-11-21）。8 轮实验的结论已固化进生产路径，代码本身零引用 |
 | `core/forever.lua` 的 debuff 学习表（`dispelTypeFromName` / `LearnDebuffTypes` / `QueryDispelBySpellTable`）+ `db.char.dispelSpellTypes` | **已删除**。「脱战学表→战斗查表」实测走不通（受限时按 ID 查询返回 nil，无法区分命中与读不到），已被引擎染色路径取代 |
 | `main.lua` 的 `clearGroupBlocks` | **已删除**（2026-11-21）。队伍块清零已由 `updateGroup` 重建 + Python 端 `_role_not_zero` 过滤覆盖 |
-| `core/core.lua` help 里的 `/cy dispeltest` | **已删除**。该命令分支从来就不存在（只有 `dispelprobe` / `dispelscan` / `dispelpix`） |
+| `core/core.lua` help 里的 `/cy dispeltest` | **已删除**。该命令分支从来就不存在 |
 | `core/block.lua` 的 `ClearAllCyberDeckBars` | **保留并已接上调用点**（2026-11-21）。换专精时清掉上一套专精建的计数条，见下方说明 |
 
 > ⚠️ **删「当前没调用」的代码前先分类**：
@@ -1373,7 +1324,7 @@ self.state.specIndex = newSpecIndex
 | 某个 CD 好了不补 | 节流设成了等于该 buff 的持续时间 | 有真 CD 的技能只看 `CD == 0`，不要叠加节流 |
 | GUI 能打字、游戏按键失效 | 无边框窗口没加 `WS_EX_NOACTIVATE`，点一下就抢焦点 | 建窗时补 `0x08000000` |
 | 部分怪一个技能都不放 | `_is_enemy` 写成 `目标类型 == 1`，而敌对带可驱散 buff 时是 2~10 | 判区间 `1 <= 目标类型 <= 10` |
-| 队友中毒/疾病了但不驱散 | `main.lua` 的 `dispelAbilities` 里写了**别的版本的法术 ID**，本服是经典 ID，一个都对不上 → `hasLearnedAnySpell` 全 false → 驱散曲线点位被写成 0 → 队友的「驱散」像素恒为 0（**不报错，很难查**） | 能力表按本服实际法术 ID 写；改完用 `/cy dispelprobe` 看点位是不是 0 |
+| 队友中毒/疾病了但不驱散 | `main.lua` 的 `dispelAbilities` 里写了**别的版本的法术 ID**，本服是经典 ID，一个都对不上 → `hasLearnedAnySpell` 全 false → 驱散曲线点位被写成 0 → 队友的「驱散」像素恒为 0（**不报错，很难查**） | 能力表按本服实际法术 ID 写；改完用 `/cy gui` 看驱散格的像素值对不对 |
 | 脱战时角色自己按技能 | 把「维持 buff」写成无 `战斗` 条件的兜底分支，脱战也每 30 秒按一次 | 维持类分支一律加 `战斗 and`，脱战不做任何操作 |
 | 面板显示队友血量变成「100s」 | 新增的计时块落进了队伍块区间，两个 updater 抢同一像素 | 新块编号先算队伍块区间：`start=57`、`num=5` 时是 `58~207`，**208 之后才安全** |
 | 以为「打字时会乱按键」要加守卫 | 只 grep 了 `Arasaka/` 就下结论——调度层 `logic_gui_Tools.py` 早就有 `if not sd.get("有效性"): continue` | 查横切逻辑要连调度层一起看；职业逻辑里重复判反而会漂移 |
@@ -1398,7 +1349,7 @@ python .workbuddy/audit_wrong_deletion.py
 ```
 
 > 只跑语法检查会漏掉「函数被吞并」「分支被挡死」「配置断链」这类结构性问题。
-> 只想确认改动没坏，进游戏打 `/cy spec`、`/cy gui`、`/cy dispelprobe` 看像素即可。
+> 只想确认改动没坏，进游戏打 `/cy spec`、`/cy gui` 看像素即可。
 
 全部通过再交付。
 

@@ -348,41 +348,17 @@ function CyberDeck:SlashCommand(input, editbox)
         print("临时 delay 标志（db.char.delay 置 1 持续 x 秒后归零）: /cy delay [秒]，省略秒数则为 1 秒")
         print("界面设置(Ace): /cy options")
         print("查看专精/技能解析: /cy spec")
-        print("探测光环字段可读性: /cy auraprobe")
         print("探测当前上下文的 secret 限制: /cy secrets")
-        print("探测驱散能力/曲线点位: /cy dispelprobe")
-        print("驱散链路逐环诊断: /cy dispelscan")
-        print("引擎染色驱散探针状态: /cy dispelpix")
         print("像素块调试界面: /cy gui")
         print("本命令列表: /cy help")
     elseif command == "spec" then
         if self.PrintSpecDebug then
             self:PrintSpecDebug()
         end
-    elseif command == "auraprobe" or command == "ap" then
-        -- 探测无限服的 secret 范围：哪些光环字段读得到、哪些是秘密值
-        if self.ProbeAuras then
-            self:ProbeAuras()
-        end
     elseif command == "secrets" or command == "sec" then
         -- 探测当前上下文的 secret 限制：哪些类别的数据会变成 secret 值
         if self.PrintSecretContext then
             self:PrintSecretContext()
-        end
-    elseif command == "dispelprobe" or command == "dp" then
-        -- 驱散失效排查：能力表里的法术 ID 是否对得上无限服、曲线点位是不是 0
-        if self.PrintDispelDebug then
-            self:PrintDispelDebug()
-        end
-    elseif command == "dispelscan" or command == "ds" then
-        -- 驱散链路逐环诊断：战斗中/脱战各跑一次，对比输出
-        if self.PrintDispelScan then
-            self:PrintDispelScan()
-        end
-    elseif command == "dispelpix" or command == "dpx" then
-        -- 引擎染色驱散探针：每个队友一格，引擎按 debuff 类型染色到色条上
-        if self.PrintDispelProbe then
-            self:PrintDispelProbe()
         end
     elseif command == "gui" then
         if self.OpenInfoGUI then
