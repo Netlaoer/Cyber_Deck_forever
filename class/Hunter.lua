@@ -1,172 +1,170 @@
 if UnitClassBase("player") ~= "HUNTER" then return end
 local addon, ns = ...
+
+--[[
+    class/Hunter.lua — 无限服(1.60.1 / Interface 16001)版 · 骨架
+    ------------------------------------------------------------------
+    ⚠️ 本文件是**骨架**：像素块布局已按无限服规范排好，但**决策逻辑还没写**。
+       对应的 Arasaka/class/hunter_logic.py 尚未实现，因此装了插件也不会有动作。
+
+    与正式服版的区别：
+    1. 技能用 name 而不是 spellId；main.lua 按名称解析到"已学会的 rank"，
+       没学会的技能自动写 255（不可用）。
+    2. 没有蓄力 / 一键辅助 / 英雄天赋 / 首领战 / 难度这些零售机制。
+    3. 通用块 1~15 与 config.yml 顶层 state 一致；16~17 留空。
+
+    索引表：
+      1-15    通用（与全局 state 一致）
+      16-17   留空
+      18-28   职业状态（施法技能/施法目标/目标距离/自动攻击/敌人人数/
+              爆发开关/大红冷却/延迟/驱散开关/5码敌人/目标施法）
+      29-85  技能（按学习等级排序，共 57 个）
+      86    队伍块起点（每人 num 格：生命值/职责/驱散）
+      86+1 起  预留给该职业特有的光环块
+
+    技能名来自 endgametools 的无限服职业法术页（经典 60 级技能组 + 天赋）。
+    要接决策层时：
+      1. 在 Arasaka/class/hunter_logic.py 实现 run_hunter_logic(state_dict, spec_name)
+      2. 在 Arasaka/config.yml 加 <职业ID>/<专精ID> 段（spells 的键名 = 下面的中文名）
+      3. 在 Arasaka/keymap/hunter.yml 建热键表
+      4. 写 Progress/hunter.md 记录该职业的像素索引与决策优先级
+]]
+
+local function buildBlocks()
+    return {
+        powerType = "FOCUS",
+        [1] = { type = "block", name = "锚点" },
+        [2] = { type = "block", name = "职业" },
+        [3] = { type = "block", name = "专精" },
+        [4] = { type = "block", name = "有效性" },
+        [5] = { type = "block", name = "战斗" },
+        [6] = { type = "block", name = "移动" },
+        [7] = { type = "block", name = "施法" },
+        [8] = { type = "block", name = "引导" },
+        [9] = { type = "block", name = "生命值" },
+        [10] = { type = "block", name = "能量值" },
+        [11] = { type = "block", name = "目标生命值" },
+        [12] = { type = "block", name = "法术失败" },
+        [13] = { type = "block", name = "目标类型" },
+        [14] = { type = "block", name = "队伍类型" },
+        [15] = { type = "block", name = "队伍人数" },
+        [18] = { type = "block", name = "施法技能" },
+        [19] = { type = "block", name = "施法目标" },
+        [20] = { type = "block", name = "目标距离" },
+        [21] = { type = "block", name = "自动攻击" },
+        [22] = { type = "block", name = "敌人人数" },
+        [23] = { type = "block", name = "爆发开关" },
+        [24] = { type = "block", name = "大红冷却" },
+        [25] = { type = "block", name = "延迟" },
+        [26] = { type = "block", name = "驱散开关" },
+        [27] = { type = "block", name = "5码敌人" },
+        [28] = { type = "block", name = "目标施法" },
+        [29] = { type = "spell", name = "猛禽一击" },  -- 天赋解锁（未点天赋时写 255）
+        [30] = { type = "spell", name = "自动射击" },  -- 天赋解锁（未点天赋时写 255）
+        [31] = { type = "spell", name = "蝰蛇守护" },
+        [32] = { type = "spell", name = "追踪野兽" },
+        [33] = { type = "spell", name = "雄狮之心" },
+        [34] = { type = "spell", name = "毒蛇钉刺" },
+        [35] = { type = "spell", name = "灵猴守护" },
+        [36] = { type = "spell", name = "奥术射击" },
+        [37] = { type = "spell", name = "猎人印记" },
+        [38] = { type = "spell", name = "震荡射击" },
+        [39] = { type = "spell", name = "召唤宠物" },
+        [40] = { type = "spell", name = "喂养宠物" },
+        [41] = { type = "spell", name = "复活宠物" },
+        [42] = { type = "spell", name = "解散野兽" },
+        [43] = { type = "spell", name = "追踪人型生物" },
+        [44] = { type = "spell", name = "雄鹰守护" },
+        [45] = { type = "spell", name = "驯服野兽" },
+        [46] = { type = "spell", name = "扰乱射击" },
+        [47] = { type = "spell", name = "摔绊" },
+        [48] = { type = "spell", name = "治疗宠物" },
+        [49] = { type = "spell", name = "恐吓野兽" },
+        [50] = { type = "spell", name = "野兽之眼" },
+        [51] = { type = "spell", name = "鹰眼术" },
+        [52] = { type = "spell", name = "猫鼬撕咬" },
+        [53] = { type = "spell", name = "献祭陷阱" },
+        [54] = { type = "spell", name = "多重射击" },
+        [55] = { type = "spell", name = "追踪亡灵" },
+        [56] = { type = "spell", name = "冰冻陷阱" },
+        [57] = { type = "spell", name = "猎豹守护" },
+        [58] = { type = "spell", name = "瞄准射击" },
+        [59] = { type = "spell", name = "逃脱" },
+        [60] = { type = "spell", name = "毒蝎钉刺" },
+        [61] = { type = "spell", name = "追踪隐藏生物" },
+        [62] = { type = "spell", name = "野兽知识" },
+        [63] = { type = "spell", name = "急速射击" },
+        [64] = { type = "spell", name = "追踪元素生物" },
+        [65] = { type = "spell", name = "冰霜陷阱" },
+        [66] = { type = "spell", name = "假死" },
+        [67] = { type = "spell", name = "割伤" },
+        [68] = { type = "spell", name = "反击" },
+        [69] = { type = "spell", name = "野兽守护" },
+        [70] = { type = "spell", name = "强击光环" },
+        [71] = { type = "spell", name = "照明弹" },
+        [72] = { type = "spell", name = "追踪恶魔" },
+        [73] = { type = "spell", name = "魔化照明弹" },
+        [74] = { type = "spell", name = "爆炸陷阱" },
+        [75] = { type = "spell", name = "召唤雄鹰" },
+        [76] = { type = "spell", name = "蝰蛇钉刺" },
+        [77] = { type = "spell", name = "乱射" },  -- 天赋解锁（未点天赋时写 255）
+        [78] = { type = "spell", name = "豹群守护" },  -- 天赋解锁（未点天赋时写 255）
+        [79] = { type = "spell", name = "追踪巨人" },  -- 天赋解锁（未点天赋时写 255）
+        [80] = { type = "spell", name = "野性守护" },  -- 天赋解锁（未点天赋时写 255）
+        [81] = { type = "spell", name = "狙击" },  -- 天赋解锁（未点天赋时写 255）
+        [82] = { type = "spell", name = "追踪龙类" },  -- 天赋解锁（未点天赋时写 255）
+        [83] = { type = "spell", name = "黑箭" },  -- 天赋解锁（未点天赋时写 255）
+        [84] = { type = "spell", name = "宁神射击" },  -- 天赋解锁（未点天赋时写 255）
+        [85] = { type = "spell", name = "猎鹰守护" },  -- 天赋解锁（未点天赋时写 255）
+
+        -- 队伍块：每人 num 格（生命值 / 职责 / 驱散）
+        -- 队伍块必须排在技能块之外，config.yml 的 group.start 与这里要一致
+        [86] = {
+            type = "group",
+            num = 3,
+            healthPercent = 1,
+            role = 2,
+            dispel = 3,
+            auras = {},
+        },
+    }
+end
+
 CyberDeck.ClassBlocks = {
-    [1] = {
-        [1] = { type = "block", name = "锚点" },
-        [2] = { type = "block", name = "职业" },
-        [3] = { type = "block", name = "专精" },
-        [4] = { type = "block", name = "有效性" },
-        [5] = { type = "block", name = "战斗" },
-        [6] = { type = "block", name = "移动" },
-        [7] = { type = "block", name = "施法" },
-        [8] = { type = "block", name = "引导" },
-        [9] = { type = "block", name = "蓄力" },
-        [10] = { type = "block", name = "蓄力层数" },
-        [11] = { type = "block", name = "生命值" },
-        [12] = { type = "block", name = "能量值" },
-        [13] = { type = "block", name = "一键辅助" },
-        [14] = { type = "block", name = "法术失败" },
-        [15] = { type = "block", name = "目标类型" },
-        [16] = { type = "block", name = "队伍类型" },
-        [17] = { type = "block", name = "队伍人数" },
-        [18] = { type = "block", name = "首领战" },
-        [19] = { type = "block", name = "难度" },
-        [20] = { type = "block", name = "英雄天赋" },
-        [21] = { type = "block", name = "敌人人数" },
-        [22] = { type = "block", name = "爆发开关" },
-        [23] = { type = "block", name = "输出模式" },
-        [24] = { type = "block", name = "AOE开关" },
-
-        [30] = { type = "spell", spellId = 53480, name = "牺牲咆哮" },
-        [31] = { type = "spell", spellId = 109304, name = "意气风发" },
-        [32] = { type = "spell", spellId = 19577, name = "胁迫" },
-        [33] = { type = "spell", spellId = 5116, name = "震荡射击" },
-        [34] = { type = "spell", spellId = 19801, name = "宁神射击" },
-        [35] = { type = "spell", spellId = 187698, name = "焦油陷进" },
-        [36] = { type = "spell", spellId = 1513, name = "恐吓野兽" },
-        [37] = { type = "spell", spellId = 109248, name = "束缚射击" },
-        [38] = { type = "spell", spellId = 195645, name = "摔绊" },
-
-        [39] = { type = "spell", spellId = 34026, name = "杀戮命令" },
-        [40] = { type = "spell", spellId = 34026, name = "杀戮命令", charge = true },
-        [41] = { type = "spell", spellId = 217200, name = "倒刺射击" },
-        [42] = { type = "spell", spellId = 217200, name = "倒刺射击", charge = true },
-        [43] = { type = "spell", spellId = 147362, name = "反制射击" },
-        [44] = { type = "spell", spellId = 19574, name = "狂野怒火" },
-        [45] = { type = "spell", spellId = 1264359, name = "狂野鞭笞" },
-        [46] = { type = "aura", name = "自然之友", auraName = "自然之友", showKey = "remaining" },
-        [47] = { type = "aura", name = "猎人印记", auraName = "猎人印记", showKey = "remaining" },
-        [48] = { type = "aura", name = "狂野怒火光环", auraName = "狂野怒火", showKey = "remaining" },
-    },
-    [2] = {
-        [1] = { type = "block", name = "锚点" },
-        [2] = { type = "block", name = "职业" },
-        [3] = { type = "block", name = "专精" },
-        [4] = { type = "block", name = "有效性" },
-        [5] = { type = "block", name = "战斗" },
-        [6] = { type = "block", name = "移动" },
-        [7] = { type = "block", name = "施法" },
-        [8] = { type = "block", name = "引导" },
-        [9] = { type = "block", name = "蓄力" },
-        [10] = { type = "block", name = "蓄力层数" },
-        [11] = { type = "block", name = "生命值" },
-        [12] = { type = "block", name = "能量值" },
-        [13] = { type = "block", name = "一键辅助" },
-        [14] = { type = "block", name = "法术失败" },
-        [15] = { type = "block", name = "目标类型" },
-        [16] = { type = "block", name = "队伍类型" },
-        [17] = { type = "block", name = "队伍人数" },
-        [18] = { type = "block", name = "首领战" },
-        [19] = { type = "block", name = "难度" },
-        [20] = { type = "block", name = "英雄天赋" },
-
-        [30] = { type = "spell", spellId = 53480, name = "牺牲咆哮" },
-        [31] = { type = "spell", spellId = 109304, name = "意气风发" },
-        [32] = { type = "spell", spellId = 19577, name = "胁迫" },
-        [33] = { type = "spell", spellId = 5116, name = "震荡射击" },
-        [34] = { type = "spell", spellId = 19801, name = "宁神射击" },
-        [35] = { type = "spell", spellId = 187698, name = "焦油陷进" },
-        [36] = { type = "spell", spellId = 1513, name = "恐吓野兽" },
-        [37] = { type = "spell", spellId = 109248, name = "束缚射击" },
-        [38] = { type = "spell", spellId = 195645, name = "摔绊" },
-
-        [39] = { type = "spell", spellId = 147362, name = "反制射击" },
-        [40] = { type = "spell", spellId = 19434, name = "瞄准射击" },
-        [41] = { type = "spell", spellId = 19434, name = "瞄准射击", charge = true },
-        [42] = { type = "spell", spellId = 257044, name = "急速射击" },
-        [43] = { type = "spell", spellId = 288613, name = "百发百中" },
-    },
-    [3] = {
-        [1] = { type = "block", name = "锚点" },
-        [2] = { type = "block", name = "职业" },
-        [3] = { type = "block", name = "专精" },
-        [4] = { type = "block", name = "有效性" },
-        [5] = { type = "block", name = "战斗" },
-        [6] = { type = "block", name = "移动" },
-        [7] = { type = "block", name = "施法" },
-        [8] = { type = "block", name = "引导" },
-        [9] = { type = "block", name = "蓄力" },
-        [10] = { type = "block", name = "蓄力层数" },
-        [11] = { type = "block", name = "生命值" },
-        [12] = { type = "block", name = "能量值" },
-        [13] = { type = "block", name = "一键辅助" },
-        [14] = { type = "block", name = "法术失败" },
-        [15] = { type = "block", name = "目标类型" },
-        [16] = { type = "block", name = "队伍类型" },
-        [17] = { type = "block", name = "队伍人数" },
-        [18] = { type = "block", name = "首领战" },
-        [19] = { type = "block", name = "难度" },
-        [20] = { type = "block", name = "英雄天赋" },
-
-        [30] = { type = "spell", spellId = 53480, name = "牺牲咆哮" },
-        [31] = { type = "spell", spellId = 109304, name = "意气风发" },
-        [32] = { type = "spell", spellId = 19577, name = "胁迫" },
-        [33] = { type = "spell", spellId = 5116, name = "震荡射击" },
-        [34] = { type = "spell", spellId = 19801, name = "宁神射击" },
-        [35] = { type = "spell", spellId = 187698, name = "焦油陷进" },
-        [36] = { type = "spell", spellId = 1513, name = "恐吓野兽" },
-        [37] = { type = "spell", spellId = 109248, name = "束缚射击" },
-        [38] = { type = "spell", spellId = 195645, name = "摔绊" },
-
-        [39] = { type = "spell", spellId = 1261193, name = "爆裂火铳" },
-        [40] = { type = "spell", spellId = 1250646, name = "狩魂一击" },
-        [41] = { type = "spell", spellId = 190925, name = "鱼叉猛刺" },
-        [42] = { type = "spell", spellId = 186270, name = "猛禽一击" },
-        [43] = { type = "spell", spellId = 259495, name = "野火炸弹" },
-    },
+    [1] = buildBlocks(), -- 野兽控制
+    [2] = buildBlocks(), -- 射击
+    [3] = buildBlocks(), -- 生存
 }
+
+-- 宏表：dynamicSpells 每个技能占 30 个宏位（@raid1 / @partyN），
+-- staticSpells 是单键宏；特殊宏体（以 / 开头）放 specialSpells。
+-- 宏位总数上限 = 7 组修饰键 x 39 键 = 273，
+-- 动态技能数 x 30 + 静态数 不能超过 273。
 CyberDeck.MacrosList = {
     dynamicSpells = {},
-    specialSpells = {},
+    specialSpells = {
+    },
     staticSpells = {
-        [1] = "意气风发",
-        [2] = "灵龟守护",
-        [3] = "反制射击",
-        [4] = "多重射击",
-        [5] = "狂野怒火",
-        [6] = "夺命射击",
-        [7] = "百发百中",
-        [8] = "爆炸射击",
-        [9] = "荒野呼唤",
-        [10] = "血溅十方",
-        [11] = "治疗宠物",
-        [12] = "倒刺射击",
-        [13] = "杀戮命令",
-        [14] = "眼镜蛇射击",
-        [15] = "瞄准射击",
-        [16] = "急速射击",
-        [17] = "稳固射击",
-        [18] = "哀恸箭",
-        [19] = "猎人印记",
-        [20] = "奥术射击",
-        [21] = "奇美拉射击",
-        [22] = "夺命黑鸦",
-        [23] = "弹幕射击",
-        [24] = "召唤宠物 1",
-        [25] = "召唤宠物 2",
-        [26] = "召唤宠物 3",
-        [27] = "召唤宠物 4",
-        [28] = "召唤宠物 5",
-        [29] = "狂野鞭笞",
-        [30] = "黑蚀箭",
-        [31] = "[@cursor]乱射",
-        [32] = "投掷手斧",
-        [33] = "燎焰沥青",
-        [34] = "爆裂火铳",
-        [35] = "狩魂一击",
-        [36] = "鱼叉猛刺",
-        [37] = "猛禽一击",
-        [38] = "野火炸弹",
-        [39] = "牺牲咆哮",
+        [1] = "狙击",
+        [2] = "震荡射击",
+        [3] = "逃脱",
+        [4] = "假死",
+        [5] = "多重射击",
+        [6] = "瞄准射击",
+        [7] = "急速射击",
+        [8] = "乱射",
+        [9] = "猛禽一击",
+        [10] = "自动射击",
+        [11] = "毒蛇钉刺",
+        [12] = "奥术射击",
+        [13] = "猎人印记",
+        [14] = "强击光环",
     },
 }
+
+
+
+
+
+
+

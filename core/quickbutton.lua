@@ -5,8 +5,6 @@
 local addon, ns = ...
 local F = CyberDeck
 
-local DRAG_THRESHOLD = 10
-
 local switchButtonRegistry = {}
 local pendingBindButton = nil
 local bindBtnRegistry = {}

@@ -10,8 +10,8 @@ local addon, ns = ...
     4. 没有英雄天赋、没有一键辅助；
     5. 药水/物品 ID 是经典旧世的，不是正式服 2413xx。
 
-    本文件提供：
-    - CyberDeck.isForever
+    本文件提供（全部为无限服专用逻辑）：
+    - CyberDeck.isForever  仅用于 /cy spec 调试输出，逻辑分支不再依赖它
     - F:ResolveSpellID(name)        名称 -> 已学会的 rank ID（扫法术书）
     - F:RebuildSpellBookIndex()     重建 名称->ID 索引
     - F:GetActiveSpecIndex()        按天赋树算专精索引 1..3
@@ -49,6 +49,9 @@ end
 --                      名称 -> 法术ID
 -- ================================================================
 local spellNameToID = {}
+-- 离线训练师表里的“名字 -> 最早能学到的 rank”。不管学没学会都记一份，
+-- 用来区分“没学会”和“客户端根本没这个技能名”（天赋技能不在训练师表里，会落到后者）。
+local trainerSpellNames = {}
 local spellBookBuilt = false
 
 local function tryAddSpell(id)
@@ -102,6 +105,11 @@ function F:BuildSpellIndexFromData()
     local count = 0
     for name, bucket in pairs(byName) do
         table.sort(bucket, function(a, b) return a.level > b.level end)
+        -- 记录最早能学到的 rank（bucket 排的是 level 降序，最后一个就是 rank 1）
+        if not trainerSpellNames[name] then
+            local lowest = bucket[#bucket]
+            trainerSpellNames[name] = { id = lowest.id, level = lowest.level }
+        end
         for j = 1, #bucket do
             if C_SpellBook.IsSpellKnown(bucket[j].id) then
                 spellNameToID[name] = bucket[j].id
@@ -114,7 +122,6 @@ function F:BuildSpellIndexFromData()
 end
 
 function F:RebuildSpellBookIndex()
-    if not F.isForever then return end
     wipe(spellNameToID)
     local seen = {}
     local bank = "spell"
@@ -158,7 +165,6 @@ end
 -- 名称转 ID：只在“已学会”时返回，避免拿到未学的 rank 导致冷却永远不可用
 function F:ResolveSpellID(name)
     if type(name) ~= "string" or name == "" then return nil end
-    if not F.isForever then return nil end
     if not spellBookBuilt then self:RebuildSpellBookIndex() end
 
     local id = spellNameToID[name]
@@ -182,14 +188,72 @@ function F:InvalidateSpellBookIndex()
     wipe(spellNameToID)
 end
 
+-- 技能名状态：已学会 / 没学会（但训练师表里有）/ 表里也没有
+-- 天赋技能（如 神圣震击、忏悔）不在训练师表里，探测不到时落到第三种，
+-- 不能直接判定成“这个号没学这个技能”——有可能是天赋没点，也有可能是名字对不上。
+function F:GetSpellNameStatus(name)
+    local learned = self:ResolveSpellID(name)
+    if learned then
+        return learned, "已学会"
+    end
+    local info = trainerSpellNames[name]
+    if info then
+        return nil, ("未学会(训练师表 %d 级 ID=%d)"):format(info.level, info.id)
+    end
+    return nil, "训练师表里没有(天赋未解锁或名字对不上)"
+end
+
 -- ================================================================
 --                        专精判定
 -- ================================================================
 F.foreverSpecs = {
+    -- 圣骑士（唯一有决策层的职业，专精判定经过实机校准）
     ["PALADIN"] = {
         [1] = { id = 100021, name = "神圣", role = "HEALER", range = 30 },
         [2] = { id = 100022, name = "防护", role = "TANK", range = 10 },
         [3] = { id = 100023, name = "惩戒", role = "DAMAGER", range = 10 },
+    },
+    -- 以下 8 个职业是骨架阶段（像素块已配好，决策层未实现）。
+    -- 专精名/职责/射程取经典 60 级的标准值，接决策层时用 /cy spec 实机核对。
+    ["WARRIOR"] = {
+        [1] = { id = 100001, name = "武器", role = "DAMAGER", range = 5 },
+        [2] = { id = 100002, name = "狂怒", role = "DAMAGER", range = 5 },
+        [3] = { id = 100003, name = "防护", role = "TANK", range = 5 },
+    },
+    ["HUNTER"] = {
+        [1] = { id = 100004, name = "野兽控制", role = "DAMAGER", range = 5 },
+        [2] = { id = 100005, name = "射击", role = "DAMAGER", range = 25 },
+        [3] = { id = 100006, name = "生存", role = "TANK", range = 5 },
+    },
+    ["ROGUE"] = {
+        [1] = { id = 100007, name = "狂徒", role = "DAMAGER", range = 5 },
+        [2] = { id = 100008, name = "敏锐", role = "DAMAGER", range = 5 },
+        [3] = { id = 100009, name = "刺杀", role = "DAMAGER", range = 5 },
+    },
+    ["PRIEST"] = {
+        [1] = { id = 100010, name = "戒律", role = "HEALER", range = 30 },
+        [2] = { id = 100011, name = "圣言", role = "HEALER", range = 30 },
+        [3] = { id = 100012, name = "暗影", role = "DAMAGER", range = 30 },
+    },
+    ["SHAMAN"] = {
+        [1] = { id = 100013, name = "元素", role = "DAMAGER", range = 25 },
+        [2] = { id = 100014, name = "增强", role = "DAMAGER", range = 25 },
+        [3] = { id = 100015, name = "恢复", role = "HEALER", range = 30 },
+    },
+    ["MAGE"] = {
+        [1] = { id = 100016, name = "奥术", role = "DAMAGER", range = 30 },
+        [2] = { id = 100017, name = "火焰", role = "DAMAGER", range = 25 },
+        [3] = { id = 100018, name = "冰霜", role = "DAMAGER", range = 25 },
+    },
+    ["WARLOCK"] = {
+        [1] = { id = 100019, name = "痛苦", role = "DAMAGER", range = 30 },
+        [2] = { id = 100020, name = "恶魔学识", role = "DAMAGER", range = 20 },
+        [3] = { id = 100024, name = "毁灭", role = "DAMAGER", range = 25 },
+    },
+    ["DRUID"] = {
+        [1] = { id = 100025, name = "平衡", role = "HEALER", range = 30 },
+        [2] = { id = 100026, name = "野性", role = "DAMAGER", range = 25 },
+        [3] = { id = 100027, name = "守护", role = "TANK", range = 25 },
     },
 }
 
@@ -246,9 +310,6 @@ local SPEC_PROBE_NODES = {
 }
 
 function F:GetActiveSpecIndex()
-    if not F.isForever then
-        return C_SpecializationInfo.GetSpecialization() or 1
-    end
     -- 战斗中天赋读取可能返回 secret，直接用上次结果
     if InCombatLockdown() then
         return specCache.index
@@ -341,13 +402,19 @@ function F:GetActiveSpecIndex()
         source = "经典天赋树"
     end
 
-    -- 3) 专精专属技能：神圣之盾需防护 21 点，神圣震击/忏悔各需 31 点，
-    --    任意两个同时解锁都要超过 60 级的 51 点上限，因此天然互斥
-    local probe = {
-        ["神圣之盾"] = self:ResolveSpellID("神圣之盾"),
-        ["神圣震击"] = self:ResolveSpellID("神圣震击"),
-        ["忏悔"] = self:ResolveSpellID("忏悔"),
-    }
+    -- 3) 专精专属技能（无限服实测数据）：
+    --    神圣之盾 = Holy Shield 20927，防护 训练师技能 Lv40
+    --    神圣震击 = Holy Shock 1311606，神圣 天赋 Lv30（要点了天赋才进法术书）
+    --    忏悔     = Repentance 9623，惩戒 天赋
+    --    三者各锁一系（互斥来自"专精锁"，不是正式服那种点数上限互斥），查到就能直接定专精；
+    --    查不到只说明这一系的招牌技能没学/没点，不能当成"不是这一系"。
+    local probe = {}
+    local probeStatus = {}
+    for _, probeName in ipairs({ "神圣之盾", "神圣震击", "忏悔" }) do
+        local probeID, status = self:GetSpellNameStatus(probeName)
+        probe[probeName] = probeID
+        probeStatus[probeName] = status
+    end
     if not specIndex then
         if probe["神圣之盾"] then
             specIndex, source = 2, "技能(神圣之盾)"
@@ -389,6 +456,7 @@ function F:GetActiveSpecIndex()
     specCache.pointsByName = byName
     specCache.trees = treeDump
     specCache.skillProbe = probe
+    specCache.skillProbeStatus = probeStatus
     specCache.probeNode = probeIndex and { index = probeIndex, name = probeNodeName } or nil
     specCache.dataSpells = self.dataSpellCount
     return specCache.index
@@ -463,7 +531,7 @@ local auraSpellName = {}
 -- updateAura() 每帧算 remaining，到期自动清空。这里不再自己维护锁。
 
 function F:MarkForeverAuraCast(spellID)
-    if not F.isForever or type(spellID) ~= "number" then return end
+    if type(spellID) ~= "number" then return end
     local name = auraSpellName[spellID]
     if not name then
         local ok, info = pcall(C_Spell.GetSpellInfo, spellID)
@@ -505,7 +573,7 @@ function F:MarkForeverAuraCast(spellID)
 end
 
 function F:UpdateForeverAuras()
-    if not F.isForever or not self.blocks or not self.blocks.state then return end
+    if not self.blocks or not self.blocks.state then return end
     local st = self.blocks.state
     if not (st["圣印"] or st["神恩术"] or st["圣光灌注"] or st["正义之怒"]) then
         return
@@ -624,7 +692,6 @@ function F:PLAYER_LEAVE_COMBAT()
 end
 
 function F:UpdateForeverAutoAttack()
-    if not F.isForever then return end
     local index = self.blocks and self.blocks.state and self.blocks.state["自动攻击"]
     if not index then return end
     -- 死亡/幽灵兜底：客户端不会再发 LEAVE_COMBAT
@@ -655,8 +722,12 @@ function F:PrintSpecDebug()
     end
     local sp = specCache.skillProbe
     if sp then
+        local st = specCache.skillsProbeStatus or {}
+        -- 三个招牌技能各锁一系：神圣之盾=防护 / 神圣震击=神圣 / 忏悔=惩戒
         print(("专属技能探测: 神圣之盾=%s 神圣震击=%s 忏悔=%s"):format(
             tostring(sp["神圣之盾"]), tostring(sp["神圣震击"]), tostring(sp["忏悔"])))
+        print(("  状态: 神圣之盾[%s] 神圣震击[%s] 忏悔[%s]"):format(
+            tostring(st["神圣之盾"]), tostring(st["神圣震击"]), tostring(st["忏悔"])))
     end
 
     local pn = specCache.probeNode
@@ -868,18 +939,12 @@ end
 -- ================================================================
 --                       物品（药水/治疗石）
 -- ================================================================
-F.itemGroups = F.isForever and {
+F.itemGroups = {
     HealthPotion = { 13446, 3928, 1710, 929, 118, 858 }, -- 极效/优质/强效/治疗/次级/次级治疗药水
     ManaPotion = { 13443, 3827, 3385, 2455, 3826 },      -- 极效/优质/强效/次级/次级法力药水
     Healthstone = { 5512, 19013 },                       -- 治疗石
     Recklessness = {},                                   -- 无限服无鲁莽药水
     LightsPotential = {},                                -- 无限服无圣光潜力
-} or {
-    HealthPotion = { 241304, 241305 },
-    ManaPotion = { 241301, 241300 },
-    Healthstone = { 5512, 224464 },
-    Recklessness = { 241288, 241289 },
-    LightsPotential = { 241308, 241309 },
 }
 
 -- 像素块名 -> 物品分组

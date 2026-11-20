@@ -1,142 +1,166 @@
 if UnitClassBase("player") ~= "MAGE" then return end
 local addon, ns = ...
-CyberDeck.ClassBlocks = {
-    [1] = {
-        [1] = { type = "block", name = "锚点" },
-        [2] = { type = "block", name = "职业" },
-        [3] = { type = "block", name = "专精" },
-        [4] = { type = "block", name = "有效性" },
-        [5] = { type = "block", name = "战斗" },
-        [6] = { type = "block", name = "移动" },
-        [7] = { type = "block", name = "施法" },
-        [8] = { type = "block", name = "引导" },
-        [9] = { type = "block", name = "蓄力" },
-        [10] = { type = "block", name = "蓄力层数" },
-        [11] = { type = "block", name = "生命值" },
-        [12] = { type = "block", name = "能量值" },
-        [13] = { type = "block", name = "一键辅助" },
-        [14] = { type = "block", name = "法术失败" },
-        [15] = { type = "block", name = "目标类型" },
-        [16] = { type = "block", name = "队伍类型" },
-        [17] = { type = "block", name = "队伍人数" },
-        [18] = { type = "block", name = "首领战" },
-        [19] = { type = "block", name = "难度" },
-        [20] = { type = "block", name = "英雄天赋" },
-    },
-    [2] = {
-        [1] = { type = "block", name = "锚点" },
-        [2] = { type = "block", name = "职业" },
-        [3] = { type = "block", name = "专精" },
-        [4] = { type = "block", name = "有效性" },
-        [5] = { type = "block", name = "战斗" },
-        [6] = { type = "block", name = "移动" },
-        [7] = { type = "block", name = "施法" },
-        [8] = { type = "block", name = "引导" },
-        [9] = { type = "block", name = "蓄力" },
-        [10] = { type = "block", name = "蓄力层数" },
-        [11] = { type = "block", name = "生命值" },
-        [12] = { type = "block", name = "能量值" },
-        [13] = { type = "block", name = "一键辅助" },
-        [14] = { type = "block", name = "法术失败" },
-        [15] = { type = "block", name = "目标类型" },
-        [16] = { type = "block", name = "队伍类型" },
-        [17] = { type = "block", name = "队伍人数" },
-        [18] = { type = "block", name = "首领战" },
-        [19] = { type = "block", name = "难度" },
-        [20] = { type = "block", name = "英雄天赋" },
-    },
-    [3] = {
-        [1] = { type = "block", name = "锚点" },
-        [2] = { type = "block", name = "职业" },
-        [3] = { type = "block", name = "专精" },
-        [4] = { type = "block", name = "有效性" },
-        [5] = { type = "block", name = "战斗" },
-        [6] = { type = "block", name = "移动" },
-        [7] = { type = "block", name = "施法" },
-        [8] = { type = "block", name = "引导" },
-        [9] = { type = "block", name = "蓄力" },
-        [10] = { type = "block", name = "蓄力层数" },
-        [11] = { type = "block", name = "生命值" },
-        [12] = { type = "block", name = "能量值" },
-        [13] = { type = "block", name = "一键辅助" },
-        [14] = { type = "block", name = "法术失败" },
-        [15] = { type = "block", name = "目标类型" },
-        [16] = { type = "block", name = "队伍类型" },
-        [17] = { type = "block", name = "队伍人数" },
-        [18] = { type = "block", name = "首领战" },
-        [19] = { type = "block", name = "难度" },
-        [20] = { type = "block", name = "英雄天赋" },
 
-        [21] = { type = "block", name = "施法技能" },
+--[[
+    class/Mage.lua — 无限服(1.60.1 / Interface 16001)版 · 骨架
+    ------------------------------------------------------------------
+    ⚠️ 本文件是**骨架**：像素块布局已按无限服规范排好，但**决策逻辑还没写**。
+       对应的 Arasaka/class/mage_logic.py 尚未实现，因此装了插件也不会有动作。
+
+    与正式服版的区别：
+    1. 技能用 name 而不是 spellId；main.lua 按名称解析到"已学会的 rank"，
+       没学会的技能自动写 255（不可用）。
+    2. 没有蓄力 / 一键辅助 / 英雄天赋 / 首领战 / 难度这些零售机制。
+    3. 通用块 1~15 与 config.yml 顶层 state 一致；16~17 留空。
+
+    索引表：
+      1-15    通用（与全局 state 一致）
+      16-17   留空
+      18-28   职业状态（施法技能/施法目标/目标距离/自动攻击/敌人人数/
+              爆发开关/大红冷却/延迟/驱散开关/5码敌人/目标施法）
+      29-82  技能（按学习等级排序，共 54 个）
+      83    队伍块起点（每人 num 格：生命值/职责/驱散）
+      83+1 起  预留给该职业特有的光环块
+
+    技能名来自 endgametools 的无限服职业法术页（经典 60 级技能组 + 天赋）。
+    要接决策层时：
+      1. 在 Arasaka/class/mage_logic.py 实现 run_mage_logic(state_dict, spec_name)
+      2. 在 Arasaka/config.yml 加 <职业ID>/<专精ID> 段（spells 的键名 = 下面的中文名）
+      3. 在 Arasaka/keymap/mage.yml 建热键表
+      4. 写 Progress/mage.md 记录该职业的像素索引与决策优先级
+]]
+
+local function buildBlocks()
+    return {
+        powerType = "MANA",
+        [1] = { type = "block", name = "锚点" },
+        [2] = { type = "block", name = "职业" },
+        [3] = { type = "block", name = "专精" },
+        [4] = { type = "block", name = "有效性" },
+        [5] = { type = "block", name = "战斗" },
+        [6] = { type = "block", name = "移动" },
+        [7] = { type = "block", name = "施法" },
+        [8] = { type = "block", name = "引导" },
+        [9] = { type = "block", name = "生命值" },
+        [10] = { type = "block", name = "能量值" },
+        [11] = { type = "block", name = "目标生命值" },
+        [12] = { type = "block", name = "法术失败" },
+        [13] = { type = "block", name = "目标类型" },
+        [14] = { type = "block", name = "队伍类型" },
+        [15] = { type = "block", name = "队伍人数" },
+        [18] = { type = "block", name = "施法技能" },
+        [19] = { type = "block", name = "施法目标" },
+        [20] = { type = "block", name = "目标距离" },
+        [21] = { type = "block", name = "自动攻击" },
         [22] = { type = "block", name = "敌人人数" },
+        [23] = { type = "block", name = "爆发开关" },
+        [24] = { type = "block", name = "大红冷却" },
+        [25] = { type = "block", name = "延迟" },
+        [26] = { type = "block", name = "驱散开关" },
+        [27] = { type = "block", name = "5码敌人" },
+        [28] = { type = "block", name = "目标施法" },
+        [29] = { type = "spell", name = "奥术智慧" },
+        [30] = { type = "spell", name = "火球术" },  -- 天赋解锁（未点天赋时写 255）
+        [31] = { type = "spell", name = "霜甲术" },  -- 天赋解锁（未点天赋时写 255）
+        [32] = { type = "spell", name = "寒冰箭" },
+        [33] = { type = "spell", name = "造水术" },
+        [34] = { type = "spell", name = "火焰冲击" },
+        [35] = { type = "spell", name = "造食术" },
+        [36] = { type = "spell", name = "变形术" },
+        [37] = { type = "spell", name = "奥术飞弹" },
+        [38] = { type = "spell", name = "冰霜新星" },
+        [39] = { type = "spell", name = "缓落术" },
+        [40] = { type = "spell", name = "魔法抑制" },
+        [41] = { type = "spell", name = "魔爆术" },
+        [42] = { type = "spell", name = "烈焰风暴" },
+        [43] = { type = "spell", name = "解除次级诅咒" },
+        [44] = { type = "spell", name = "魔法增效" },
+        [45] = { type = "spell", name = "传送：奥格瑞玛" },
+        [46] = { type = "spell", name = "传送：幽暗城" },
+        [47] = { type = "spell", name = "传送：暴风城" },
+        [48] = { type = "spell", name = "传送：铁炉堡" },
+        [49] = { type = "spell", name = "唤醒" },
+        [50] = { type = "spell", name = "暴风雪" },
+        [51] = { type = "spell", name = "法力护盾" },
+        [52] = { type = "spell", name = "闪现术" },
+        [53] = { type = "spell", name = "防护火焰结界" },
+        [54] = { type = "spell", name = "灼烧" },
+        [55] = { type = "spell", name = "防护冰霜结界" },
+        [56] = { type = "spell", name = "法术反制" },
+        [57] = { type = "spell", name = "炎爆术" },
+        [58] = { type = "spell", name = "冰锥术" },
+        [59] = { type = "spell", name = "冰枪术" },
+        [60] = { type = "spell", name = "制造魔法玛瑙" },
+        [61] = { type = "spell", name = "传送：达纳苏斯" },
+        [62] = { type = "spell", name = "传送：雷霆崖" },
+        [63] = { type = "spell", name = "冰甲术" },
+        [64] = { type = "spell", name = "奥术冲击" },
+        [65] = { type = "spell", name = "魔甲术" },
+        [66] = { type = "spell", name = "冲击波" },
+        [67] = { type = "spell", name = "奥术愤怒" },
+        [68] = { type = "spell", name = "制造魔法翡翠" },
+        [69] = { type = "spell", name = "传送门：奥格瑞玛" },  -- 天赋解锁（未点天赋时写 255）
+        [70] = { type = "spell", name = "传送门：幽暗城" },  -- 天赋解锁（未点天赋时写 255）
+        [71] = { type = "spell", name = "传送门：暴风城" },  -- 天赋解锁（未点天赋时写 255）
+        [72] = { type = "spell", name = "传送门：铁炉堡" },  -- 天赋解锁（未点天赋时写 255）
+        [73] = { type = "spell", name = "霜火之箭" },  -- 天赋解锁（未点天赋时写 255）
+        [74] = { type = "spell", name = "寒冰护体" },  -- 天赋解锁（未点天赋时写 255）
+        [75] = { type = "spell", name = "制造魔法黄水晶" },  -- 天赋解锁（未点天赋时写 255）
+        [76] = { type = "spell", name = "传送门：达纳苏斯" },  -- 天赋解锁（未点天赋时写 255）
+        [77] = { type = "spell", name = "传送门：雷霆崖" },  -- 天赋解锁（未点天赋时写 255）
+        [78] = { type = "spell", name = "传送：达拉然" },  -- 天赋解锁（未点天赋时写 255）
+        [79] = { type = "spell", name = "奥术光辉" },  -- 天赋解锁（未点天赋时写 255）
+        [80] = { type = "spell", name = "制造魔法红宝石" },  -- 天赋解锁（未点天赋时写 255）
+        [81] = { type = "spell", name = "变形术：奶牛" },  -- 天赋解锁（未点天赋时写 255）
+        [82] = { type = "spell", name = "魔火" },  -- 天赋解锁（未点天赋时写 255）
 
-        [31] = { type = "aura", name = "热能真空", auraName = "热能真空", showKey = "remaining" },
-        [32] = { type = "aura", name = "冰川尖刺！", auraName = "冰川尖刺！", showKey = "remaining" },
-        [33] = { type = "aura", name = "冰冷智慧", auraName = "冰冷智慧", showKey = "remaining" },
-        [34] = { type = "aura", name = "冰冻之雨", auraName = "冰冻之雨", showKey = "remaining" },
-        [35] = { type = "aura", name = "寒冰指", auraName = "寒冰指", showKey = "remaining" },
-        [36] = { type = "aura", name = "寒冰指层数", auraName = "寒冰指", showKey = "count" },
-    },
+        -- 队伍块：每人 num 格（生命值 / 职责 / 驱散）
+        -- 队伍块必须排在技能块之外，config.yml 的 group.start 与这里要一致
+        [83] = {
+            type = "group",
+            num = 3,
+            healthPercent = 1,
+            role = 2,
+            dispel = 3,
+            auras = {},
+        },
+    }
+end
+
+CyberDeck.ClassBlocks = {
+    [1] = buildBlocks(), -- 奥术
+    [2] = buildBlocks(), -- 火焰
+    [3] = buildBlocks(), -- 冰霜
 }
 
+-- 宏表：dynamicSpells 每个技能占 30 个宏位（@raid1 / @partyN），
+-- staticSpells 是单键宏；特殊宏体（以 / 开头）放 specialSpells。
+-- 宏位总数上限 = 7 组修饰键 x 39 键 = 273，
+-- 动态技能数 x 30 + 静态数 不能超过 273。
 CyberDeck.MacrosList = {
-    dynamicSpells = { "解除诅咒" },
-    specialSpells = {},
+    dynamicSpells = {},
+    specialSpells = {
+    },
     staticSpells = {
-        [1] = "寒冰屏障",
-        [2] = "解除诅咒",
-        [3] = "强化隐形术",
-        [4] = "超级新星",
-        [5] = "冰锥术",
-        [6] = "操控时间",
-        [7] = "回归",
-        [8] = "时间扭曲",
-        [9] = "镜像",
-        [10] = "法术反制",
-        [11] = "闪现术",
-        [12] = "缓落术",
-        [13] = "魔爆术",
-        [14] = "寒冰新星",
-        [15] = "闪光术",
-        [16] = "传送距离",
-        [17] = "闪回",
-        [18] = "强化隐形术",
-        [19] = "冰霜新星",
-        [20] = "龙息术",
-        [21] = "群体隐形",
-        [22] = "法术吸取",
-        [23] = "[@cursor]暴风雪",
-
-        [25] = "奥术智慧",
-        [26] = "寒冰箭",
-        [27] = "冰川尖刺",
-        [28] = "冰枪术",
-        [29] = "冰霜射线",
-        [30] = "冰风暴",
-        [31] = "寒冰宝珠",
-        [32] = "霜火之箭",
-        [33] = "彗星风暴",
-        [34] = "急速冷却",
-        [35] = "棱光护体",
-        [36] = "奥术脉冲",
-        [37] = "奥术弹幕",
-        [38] = "大法师之触",
-        [39] = "奥术飞弹",
-        [40] = "奥术冲击",
-        [41] = "奥术宝珠",
-        [42] = "奥术涌动",
-        [43] = "烈焰护体",
-        [44] = "深寒凝冰",
-        [45] = "燃烧",
-        [46] = "[@cursor]流星",
-        [47] = "火球术",
-        [48] = "火焰冲击",
-        [49] = "炎爆术",
-        [50] = "[@cursor]烈焰风暴",
-        [51] = "变形术",
-        [52] = "霜火之箭",
-
-        [54] = "灼烧",
-        [55] = "造餐术",
+        [1] = "冰枪术",
+        [2] = "冰锥术",
+        [3] = "炎爆术",
+        [4] = "法术反制",
+        [5] = "暴风雪",
+        [6] = "烈焰风暴",
+        [7] = "奥术飞弹",
+        [8] = "魔爆术",
+        [9] = "火球术",
+        [10] = "灼烧",
+        [11] = "寒冰箭",
+        [12] = "冰霜新星",
+        [13] = "闪现术",
     },
 }
+
+
+
+
+
+
+

@@ -203,12 +203,6 @@ function CyberDeck:SyncBlockFromDB()
     end
 end
 
-local function GetVersion()
-    return C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addon, "Version")
-        or GetAddOnMetadata(addon, "Version")
-        or "?"
-end
-
 --- AceConfig options 表：根节点 childGroups = "tab" 时，子 group 显示为标签页
 CyberDeck.options = {
     type = "group",

@@ -1,239 +1,165 @@
 if UnitClassBase("player") ~= "PRIEST" then return end
 local addon, ns = ...
 
+--[[
+    class/Priest.lua — 无限服(1.60.1 / Interface 16001)版 · 骨架
+    ------------------------------------------------------------------
+    ⚠️ 本文件是**骨架**：像素块布局已按无限服规范排好，但**决策逻辑还没写**。
+       对应的 Arasaka/class/priest_logic.py 尚未实现，因此装了插件也不会有动作。
+
+    与正式服版的区别：
+    1. 技能用 name 而不是 spellId；main.lua 按名称解析到"已学会的 rank"，
+       没学会的技能自动写 255（不可用）。
+    2. 没有蓄力 / 一键辅助 / 英雄天赋 / 首领战 / 难度这些零售机制。
+    3. 通用块 1~15 与 config.yml 顶层 state 一致；16~17 留空。
+
+    索引表：
+      1-15    通用（与全局 state 一致）
+      16-17   留空
+      18-28   职业状态（施法技能/施法目标/目标距离/自动攻击/敌人人数/
+              爆发开关/大红冷却/延迟/驱散开关/5码敌人/目标施法）
+      29-78  技能（按学习等级排序，共 50 个）
+      79    队伍块起点（每人 num 格：生命值/职责/驱散）
+      79+1 起  预留给该职业特有的光环块
+
+    技能名来自 endgametools 的无限服职业法术页（经典 60 级技能组 + 天赋）。
+    要接决策层时：
+      1. 在 Arasaka/class/priest_logic.py 实现 run_priest_logic(state_dict, spec_name)
+      2. 在 Arasaka/config.yml 加 <职业ID>/<专精ID> 段（spells 的键名 = 下面的中文名）
+      3. 在 Arasaka/keymap/priest.yml 建热键表
+      4. 写 Progress/priest.md 记录该职业的像素索引与决策优先级
+]]
+
+local function buildBlocks()
+    return {
+        powerType = "MANA",
+        [1] = { type = "block", name = "锚点" },
+        [2] = { type = "block", name = "职业" },
+        [3] = { type = "block", name = "专精" },
+        [4] = { type = "block", name = "有效性" },
+        [5] = { type = "block", name = "战斗" },
+        [6] = { type = "block", name = "移动" },
+        [7] = { type = "block", name = "施法" },
+        [8] = { type = "block", name = "引导" },
+        [9] = { type = "block", name = "生命值" },
+        [10] = { type = "block", name = "能量值" },
+        [11] = { type = "block", name = "目标生命值" },
+        [12] = { type = "block", name = "法术失败" },
+        [13] = { type = "block", name = "目标类型" },
+        [14] = { type = "block", name = "队伍类型" },
+        [15] = { type = "block", name = "队伍人数" },
+        [18] = { type = "block", name = "施法技能" },
+        [19] = { type = "block", name = "施法目标" },
+        [20] = { type = "block", name = "目标距离" },
+        [21] = { type = "block", name = "自动攻击" },
+        [22] = { type = "block", name = "敌人人数" },
+        [23] = { type = "block", name = "爆发开关" },
+        [24] = { type = "block", name = "大红冷却" },
+        [25] = { type = "block", name = "延迟" },
+        [26] = { type = "block", name = "驱散开关" },
+        [27] = { type = "block", name = "5码敌人" },
+        [28] = { type = "block", name = "目标施法" },
+        [29] = { type = "spell", name = "惩击" },  -- 天赋解锁（未点天赋时写 255）
+        [30] = { type = "spell", name = "暗影魔" },
+        [31] = { type = "spell", name = "次级治疗术" },  -- 天赋解锁（未点天赋时写 255）
+        [32] = { type = "spell", name = "真言术：韧" },
+        [33] = { type = "spell", name = "暗言术：痛" },
+        [34] = { type = "spell", name = "真言术：盾" },
+        [35] = { type = "spell", name = "恢复" },
+        [36] = { type = "spell", name = "渐隐术" },
+        [37] = { type = "spell", name = "复活术" },
+        [38] = { type = "spell", name = "心灵震爆" },
+        [39] = { type = "spell", name = "星辰碎片" },
+        [40] = { type = "spell", name = "神圣恩典" },
+        [41] = { type = "spell", name = "绝望祷言" },
+        [42] = { type = "spell", name = "虚弱之触" },
+        [43] = { type = "spell", name = "虚弱妖术" },
+        [44] = { type = "spell", name = "迷惑闪光" },
+        [45] = { type = "spell", name = "心灵之火" },
+        [46] = { type = "spell", name = "心灵尖啸" },
+        [47] = { type = "spell", name = "祛病术" },
+        [48] = { type = "spell", name = "治疗术" },
+        [49] = { type = "spell", name = "驱散魔法" },
+        [50] = { type = "spell", name = "噬灵瘟疫" },
+        [51] = { type = "spell", name = "回馈" },
+        [52] = { type = "spell", name = "安抚心灵" },
+        [53] = { type = "spell", name = "应急方案" },
+        [54] = { type = "spell", name = "快速治疗" },
+        [55] = { type = "spell", name = "暗影守卫" },
+        [56] = { type = "spell", name = "束缚亡灵" },
+        [57] = { type = "spell", name = "神圣之火" },
+        [58] = { type = "spell", name = "艾露恩的赐福" },
+        [59] = { type = "spell", name = "防护恐惧结界" },
+        [60] = { type = "spell", name = "黑暗献祭" },
+        [61] = { type = "spell", name = "心灵视界" },
+        [62] = { type = "spell", name = "法力燃烧" },
+        [63] = { type = "spell", name = "神圣新星" },
+        [64] = { type = "spell", name = "精神鞭笞" },
+        [65] = { type = "spell", name = "治疗祷言" },
+        [66] = { type = "spell", name = "神圣之灵" },
+        [67] = { type = "spell", name = "精神控制" },
+        [68] = { type = "spell", name = "防护暗影" },
+        [69] = { type = "spell", name = "暗言术：灭" },
+        [70] = { type = "spell", name = "驱除疾病" },
+        [71] = { type = "spell", name = "漂浮术" },
+        [72] = { type = "spell", name = "光明之泉" },  -- 天赋解锁（未点天赋时写 255）
+        [73] = { type = "spell", name = "强效治疗术" },  -- 天赋解锁（未点天赋时写 255）
+        [74] = { type = "spell", name = "苦修" },  -- 天赋解锁（未点天赋时写 255）
+        [75] = { type = "spell", name = "坚韧祷言" },  -- 天赋解锁（未点天赋时写 255）
+        [76] = { type = "spell", name = "愈合祷言" },  -- 天赋解锁（未点天赋时写 255）
+        [77] = { type = "spell", name = "暗影防护祷言" },  -- 天赋解锁（未点天赋时写 255）
+        [78] = { type = "spell", name = "精神祷言" },  -- 天赋解锁（未点天赋时写 255）
+
+        -- 队伍块：每人 num 格（生命值 / 职责 / 驱散）
+        -- 队伍块必须排在技能块之外，config.yml 的 group.start 与这里要一致
+        [79] = {
+            type = "group",
+            num = 3,
+            healthPercent = 1,
+            role = 2,
+            dispel = 3,
+            auras = {},
+        },
+    }
+end
+
 CyberDeck.ClassBlocks = {
-    [1] = {
-
-        ["countBars"] = {
-            { valueType = "charge", name = "苦修", minValue = 0, maxValue = 2, spellId = 47540 },
-            { valueType = "charge", name = "真言术：耀", minValue = 0, maxValue = 2, spellId = 194509 }
-        },
-
-        [1] = { type = "block", name = "锚点" },
-        [2] = { type = "block", name = "职业" },
-        [3] = { type = "block", name = "专精" },
-        [4] = { type = "block", name = "有效性" },
-        [5] = { type = "block", name = "战斗" },
-        [6] = { type = "block", name = "移动" },
-        [7] = { type = "block", name = "施法" },
-        [8] = { type = "block", name = "引导" },
-        [9] = { type = "block", name = "蓄力" },
-        [10] = { type = "block", name = "蓄力层数" },
-        [11] = { type = "block", name = "生命值" },
-        [12] = { type = "block", name = "能量值" },
-        [13] = { type = "block", name = "一键辅助" },
-        [14] = { type = "block", name = "法术失败" },
-        [15] = { type = "block", name = "目标类型" },
-        [16] = { type = "block", name = "队伍类型" },
-        [17] = { type = "block", name = "队伍人数" },
-        [18] = { type = "block", name = "首领战" },
-        [19] = { type = "block", name = "难度" },
-        [20] = { type = "block", name = "英雄天赋" },
-
-        [21] = { type = "block", name = "目标生命值" },
-        [22] = { type = "block", name = "施法技能" },
-        [23] = { type = "block", name = "施法目标" },
-
-        [24] = { type = "aura", name = "虚空之盾", auraName = "虚空之盾", showKey = "remaining" },
-        [25] = { type = "aura", name = "圣光涌动", auraName = "圣光涌动", showKey = "remaining" },
-        [26] = { type = "aura", name = "涌动层数", auraName = "圣光涌动", showKey = "count" },
-        [27] = { type = "aura", name = "熵能裂隙", auraName = "熵能裂隙", showKey = "remaining" },
-        [28] = { type = "aura", name = "暗影愈合", auraName = "暗影愈合", showKey = "remaining" },
-        [29] = { type = "aura", name = "暗影层数", auraName = "暗影愈合", showKey = "count" },
-        [30] = { type = "aura", name = "福音层数", auraName = "福音", showKey = "count" },
-        [46] = { type = "aura", name = "祸福相依", auraName = "祸福相依", showKey = "remaining" },
-        [47] = { type = "aura", name = "祸福层数", auraName = "祸福相依", showKey = "count" },
-
-        [31] = { type = "spell", spellId = 8122, name = "心灵尖啸" },
-        [32] = { type = "spell", spellId = 32375, name = "群体驱散" },
-        [33] = { type = "spell", spellId = 527, name = "纯净术" },
-        [34] = { type = "spell", spellId = 19236, name = "绝望祷言" },
-        [35] = { type = "spell", spellId = 232633, name = "奥术洪流" },
-
-        [36] = { type = "spell", spellId = 47540, name = "苦修" },
-        [37] = { type = "spell", spellId = 47540, name = "苦修", charge = true },
-        [38] = { type = "spell", spellId = 194509, name = "真言术：耀" },
-        [39] = { type = "spell", spellId = 194509, name = "真言术：耀", charge = true },
-        [40] = { type = "spell", spellId = 17, name = "真言术：盾" },
-        [41] = { type = "spell", spellId = 62618, name = "真言术：障" },
-        [42] = { type = "spell", spellId = 421453, name = "终极苦修" },
-        [43] = { type = "spell", spellId = 472433, name = "福音" },
-        [44] = { type = "spell", spellId = 8092, name = "心灵震爆" },
-        [45] = { type = "spell", spellId = 32379, name = "暗言术：灭" },
-        [49] = { type = "spell", spellId = 34433, name = "暗影魔" },
-        [50] = { type = "spell", spellId = 1235211, name = "暗影分流" },
-        [51] = { type = "spell", spellId = 586, name = "渐隐术" },
-
-        [48] = { type = "block", name = "延迟" },
-        [52] = { type = "block", name = "大红冷却" },
-        [53] = { type = "block", name = "敌人人数" },
-        [54] = { type = "block", name = "有光环敌人数量" },
-        [55] = { type = "block", name = "目标光环数量" },
-        [70] = {
-            type = "group",
-            num = 5,
-            healthPercent = 1,
-            role = 2,
-            dispel = 3,
-            auras = {
-                [4] = { 194384 },      -- 救赎, 194384
-                [5] = { 17, 1253593 }, -- 真言术：盾, 虚空护盾, 17, 1253593
-            },
-        },
-    },
-    [2] = {
-        ["countBars"] = {
-            { valueType = "charge", name = "愈合祷言", minValue = 0, maxValue = 2, spellId = 33076 },
-            { valueType = "charge", name = "圣言术：静", minValue = 0, maxValue = 2, spellId = 2050 }
-        },
-
-        [1] = { type = "block", name = "锚点" },
-        [2] = { type = "block", name = "职业" },
-        [3] = { type = "block", name = "专精" },
-        [4] = { type = "block", name = "有效性" },
-        [5] = { type = "block", name = "战斗" },
-        [6] = { type = "block", name = "移动" },
-        [7] = { type = "block", name = "施法" },
-        [8] = { type = "block", name = "引导" },
-        [9] = { type = "block", name = "蓄力" },
-        [10] = { type = "block", name = "蓄力层数" },
-        [11] = { type = "block", name = "生命值" },
-        [12] = { type = "block", name = "能量值" },
-        [13] = { type = "block", name = "一键辅助" },
-        [14] = { type = "block", name = "法术失败" },
-        [15] = { type = "block", name = "目标类型" },
-        [16] = { type = "block", name = "队伍类型" },
-        [17] = { type = "block", name = "队伍人数" },
-        [18] = { type = "block", name = "首领战" },
-        [19] = { type = "block", name = "难度" },
-        [20] = { type = "block", name = "英雄天赋" },
-
-        [22] = { type = "block", name = "施法技能" },
-        [23] = { type = "block", name = "施法目标" },
-
-        [25] = { type = "aura", name = "织光者", auraName = "织光者", showKey = "remaining" },
-        [26] = { type = "aura", name = "织光者层数", auraName = "织光者", showKey = "count" },
-        [27] = { type = "aura", name = "圣光涌动", auraName = "圣光涌动", showKey = "remaining" },
-        [28] = { type = "aura", name = "祈福", auraName = "祈福", showKey = "remaining" },
-
-        [31] = { type = "spell", spellId = 8122, name = "心灵尖啸" },
-        [32] = { type = "spell", spellId = 32375, name = "群体驱散" },
-        [33] = { type = "spell", spellId = 527, name = "纯净术" },
-        [34] = { type = "spell", spellId = 19236, name = "绝望祷言" },
-        [35] = { type = "spell", spellId = 232633, name = "奥术洪流" },
-
-        [36] = { type = "spell", spellId = 33076, name = "愈合祷言" },
-        [37] = { type = "spell", spellId = 33076, name = "愈合祷言", charge = true },
-        [38] = { type = "spell", spellId = 2050, name = "圣言术：静" },
-        [39] = { type = "spell", spellId = 2050, name = "圣言术：静", charge = true },
-        [40] = { type = "spell", spellId = 88625, name = "圣言术：罚" },
-        [41] = { type = "spell", spellId = 200183, name = "神圣化身" },
-        [42] = { type = "spell", spellId = 14914, name = "神圣之火" },
-        [43] = { type = "spell", spellId = 120517, name = "光晕" },
-        [44] = { type = "spell", spellId = 64843, name = "神圣赞美诗" },
-
-        [70] = {
-            type = "group",
-            num = 5,
-            healthPercent = 1,
-            role = 2,
-            dispel = 3,
-            auras = {
-                [4] = { 41635 }, -- 愈合祷言, 41635
-                [5] = { 139 },   -- 恢复, 139
-            },
-        },
-
-    },
-    [3] = {
-        [1] = { type = "block", name = "锚点" },
-        [2] = { type = "block", name = "职业" },
-        [3] = { type = "block", name = "专精" },
-        [4] = { type = "block", name = "有效性" },
-        [5] = { type = "block", name = "战斗" },
-        [6] = { type = "block", name = "移动" },
-        [7] = { type = "block", name = "施法" },
-        [8] = { type = "block", name = "引导" },
-        [9] = { type = "block", name = "蓄力" },
-        [10] = { type = "block", name = "蓄力层数" },
-        [11] = { type = "block", name = "生命值" },
-        [12] = { type = "block", name = "能量值" },
-        [13] = { type = "block", name = "一键辅助" },
-        [14] = { type = "block", name = "法术失败" },
-        [15] = { type = "block", name = "目标类型" },
-        [16] = { type = "block", name = "队伍类型" },
-        [17] = { type = "block", name = "队伍人数" },
-        [18] = { type = "block", name = "首领战" },
-        [19] = { type = "block", name = "难度" },
-        [20] = { type = "block", name = "英雄天赋" },
-
-        [21] = { type = "block", name = "爆发开关" },
-        [22] = { type = "block", name = "输出模式" },
-        [23] = { type = "block", name = "AOE开关" },
-        [24] = { type = "block", name = "敌人人数" },
-        [25] = { type = "block", name = "目标距离" },
-        [26] = { type = "block", name = "目标生命值" },
-        [27] = { type = "block", name = "施法技能" },
-        [28] = { type = "block", name = "目标引导" },
-        [29] = { type = "block", name = "目标施法" },
-        [31] = { type = "spell", spellId = 8122, name = "心灵尖啸" },
-        [32] = { type = "spell", spellId = 32375, name = "群体驱散" },
-        [33] = { type = "spell", spellId = 527, name = "纯净术" },
-        [34] = { type = "spell", spellId = 19236, name = "绝望祷言" },
-        [35] = { type = "spell", spellId = 232633, name = "奥术洪流" },
-
-        [36] = { type = "spell", spellId = 8092, name = "心灵震爆" },
-        [37] = { type = "spell", spellId = 32379, name = "暗言术：灭" },
-        [38] = { type = "spell", spellId = 263165, name = "虚空洪流" },
-        [39] = { type = "spell", spellId = 228260, name = "虚空形态" },
-        [40] = { type = "spell", spellId = 1227280, name = "触须猛击" },
-        [41] = { type = "spell", spellId = 15286, name = "吸血鬼的拥抱" },
-        [42] = { type = "spell", spellId = 120644, name = "光晕" },
-        [43] = { type = "spell", spellId = 1242173, name = "虚空齐射", forcedKnown = true },
-
-    },
+    [1] = buildBlocks(), -- 戒律
+    [2] = buildBlocks(), -- 圣言
+    [3] = buildBlocks(), -- 暗影
 }
 
+-- 宏表：dynamicSpells 每个技能占 30 个宏位（@raid1 / @partyN），
+-- staticSpells 是单键宏；特殊宏体（以 / 开头）放 specialSpells。
+-- 宏位总数上限 = 7 组修饰键 x 39 键 = 273，
+-- 动态技能数 x 30 + 静态数 不能超过 273。
 CyberDeck.MacrosList = {
-    dynamicSpells = { "苦修", "快速治疗", "真言术：盾", "愈合祷言", "纯净术", "圣言术：静" },
-    specialSpells = { [36] = "/castsequence reset=3 真言术：耀,x", },
+    dynamicSpells = {},
+    specialSpells = {
+    },
     staticSpells = {
-        [1] = "心灵震爆",
-        [2] = "惩击",
-        [3] = "暗言术：痛",
-        [4] = "[@player]真言术：韧",
-        [5] = "神圣新星",
-        [6] = "苦修",
-        [7] = "真言术：耀",
-        [8] = "福音",
-        [9] = "终极苦修",
-        [10] = "绝望祷言",
-        [11] = "暗言术：灭",
-        [12] = "吸血鬼之触",
-        [13] = "[nostance:1]暗影形态",
-        [14] = "暗言术：癫",
-        [15] = "精神鞭笞",
-        [16] = "虚空形态",
-        [17] = "虚空洪流",
-        [18] = "触须猛击",
-        [19] = "虚空冲击",
-        [20] = "虚空齐射",
-        [21] = "圣言术：罚",
-        [22] = "神圣之火",
-        [23] = "治疗祷言",
-        [24] = "神圣化身",
-        [25] = "奥术洪流",
-        [26] = "心灵尖啸",
-        [27] = "[@cursor]群体驱散",
-        [28] = "[@cursor]真言术：障",
-        [29] = "神圣赞美诗",
-        [30] = "光晕",
-        [31] = "纯净术",
-        [32] = "快速治疗",
-        [33] = "真言术：盾",
-        [34] = "愈合祷言",
-        [35] = "圣言术：静",
-        [37] = "item:241304\n/cast item:241305", -- 银月城生命药水
-        [38] = "渐隐术",
+        [1] = "祛病术",
+        [2] = "驱散魔法",
+        [3] = "驱除疾病",
+        [4] = "精神鞭笞",
+        [5] = "暗言术：灭",
+        [6] = "暗言术：痛",
+        [7] = "惩击",
+        [8] = "心灵震爆",
+        [9] = "噬灵瘟疫",
+        [10] = "强效治疗术",
+        [11] = "快速治疗",
+        [12] = "治疗术",
+        [13] = "次级治疗术",
+        [14] = "愈合祷言",
+        [15] = "安抚心灵",
+        [16] = "神圣新星",
     },
 }
+
+
+
+
+
+
+

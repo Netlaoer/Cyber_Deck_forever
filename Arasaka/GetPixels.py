@@ -40,22 +40,6 @@ def load_config():
 
 load_config._cache = None
 
-def get_game_top_left(window_title):
-    """获取游戏客户区（不含标题栏和边框）左上角坐标及宽度"""
-    hwnd = ctypes.windll.user32.FindWindowW(None, window_title)
-    if not hwnd:
-        return None
-    # 窗口最小化时跳过扫描，避免 mss.grab() 在 DWM 重构帧缓冲时卡死
-    if ctypes.windll.user32.IsIconic(hwnd):
-        return None
-    point = wintypes.POINT(0, 0)
-    ctypes.windll.user32.ClientToScreen(hwnd, ctypes.byref(point))
-
-    rect = wintypes.RECT()
-    ctypes.windll.user32.GetClientRect(hwnd, ctypes.byref(rect))
-    window_width = rect.right - rect.left
-
-    return point.x, point.y, window_width
 
 
 def _is_rgb_red_marker(b, g, r):

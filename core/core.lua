@@ -5,16 +5,6 @@ local AC = LibStub("AceConfig-3.0") -- AceConfig-3.0 是 Ace3 库中的一个模
 local ACD = LibStub("AceConfigDialog-3.0")
 
 function CyberDeck:OnInitialize()
-    -- 存档变量改名迁移：FuyutsuiADB（旧）→ CyberDeckADB（新）
-    -- toc 里两个都声明着，老玩家首次加载时把旧数据整体搬过来，再把旧表清空。
-    -- 等确认用户都升级过，可以把 toc 的 FuyutsuiADB 声明和这段迁移一起删掉。
-    if type(_G.FuyutsuiADB) == "table" then
-        if type(_G.CyberDeckADB) ~= "table" then
-            _G.CyberDeckADB = _G.FuyutsuiADB
-        end
-        _G.FuyutsuiADB = nil
-    end
-
     -- 使用“默认”配置文件，而非特定角色的配置文件。
     -- https://www.wowace.com/projects/ace3/pages/api/ace-db-3-0
     self.db = LibStub("AceDB-3.0"):New("CyberDeckADB", self.defaults, true)
@@ -29,7 +19,6 @@ function CyberDeck:OnInitialize()
     -- 注册斜杠命令
     self:RegisterChatCommand("cy", "SlashCommand")
     self:RegisterChatCommand("CyberDeck", "SlashCommand")
-    self:RegisterChatCommand("fu", "SlashCommand")   -- 兼容旧习惯，等价于 /cy
 
     self:GetCharacterInfo()
 end
@@ -61,8 +50,6 @@ function CyberDeck:OnEnable()
     self:RegisterEvent("UNIT_SPELLCAST_STOP")
     self:RegisterEvent("UNIT_SPELLCAST_CHANNEL_START")
     self:RegisterEvent("UNIT_SPELLCAST_CHANNEL_STOP")
-    self:RegisterEvent("UNIT_SPELLCAST_EMPOWER_START")
-    self:RegisterEvent("UNIT_SPELLCAST_EMPOWER_STOP")
     self:RegisterEvent("UNIT_SPELLCAST_SUCCEEDED")
     self:RegisterEvent("UNIT_SPELLCAST_FAILED")
     self:RegisterEvent("UNIT_POWER_UPDATE")
@@ -81,8 +68,6 @@ function CyberDeck:OnEnable()
     self:RegisterEvent("NAME_PLATE_UNIT_REMOVED")
     self:RegisterEvent("UPDATE_SHAPESHIFT_FORM")
     self:RegisterEvent("UPDATE_SHAPESHIFT_FORMS")
-    self:RegisterEvent("ENCOUNTER_START")
-    self:RegisterEvent("ENCOUNTER_END")
     self:RegisterEvent("UNIT_AURA")
     self:RegisterEvent("SPELL_UPDATE_COOLDOWN")
     self:RegisterEvent("SPELL_UPDATE_ICON")
@@ -96,9 +81,6 @@ function CyberDeck:OnEnable()
     self:RegisterEvent("ACTIONBAR_HIDEGRID")
     self:RegisterEvent("ACTIONBAR_SHOWGRID")
     self:RegisterEvent("SPELL_UPDATE_CHARGES")
-    self:RegisterEvent("ENCOUNTER_TIMELINE_EVENT_ADDED")
-    self:RegisterEvent("ENCOUNTER_TIMELINE_EVENT_REMOVED")
-    self:RegisterEvent("ENCOUNTER_TIMELINE_EVENT_STATE_CHANGED")
     if self.StartFrameUpdates then
         self:StartFrameUpdates()
     end
@@ -220,7 +202,7 @@ function CyberDeck:SwitchDispel()
     end
 end
 
---- AceConsole：由 RegisterChatCommand("cy"|"cyberdeck"|"fu", "SlashCommand") 分发，勿再手写 SlashCmdList
+--- AceConsole：由 RegisterChatCommand("cy"|"CyberDeck", "SlashCommand") 分发，勿再手写 SlashCmdList
 function CyberDeck:SlashCommand(input, editbox)
     input = (input or ""):trim()
     local command = string.lower(input)
@@ -367,6 +349,8 @@ function CyberDeck:SlashCommand(input, editbox)
         print("界面设置(Ace): /cy options")
         print("查看专精/技能解析: /cy spec")
         print("探测光环字段可读性: /cy auraprobe")
+        print("探测当前上下文的 secret 限制: /cy secrets")
+        print("探测驱散能力/曲线点位: /cy dispelprobe")
         print("像素块调试界面: /cy gui")
         print("本命令列表: /cy help")
     elseif command == "spec" then
@@ -377,6 +361,16 @@ function CyberDeck:SlashCommand(input, editbox)
         -- 探测无限服的 secret 范围：哪些光环字段读得到、哪些是秘密值
         if self.ProbeAuras then
             self:ProbeAuras()
+        end
+    elseif command == "secrets" or command == "sec" then
+        -- 探测当前上下文的 secret 限制：哪些类别的数据会变成 secret 值
+        if self.PrintSecretContext then
+            self:PrintSecretContext()
+        end
+    elseif command == "dispelprobe" or command == "dp" then
+        -- 驱散失效排查：能力表里的法术 ID 是否对得上无限服、曲线点位是不是 0
+        if self.PrintDispelDebug then
+            self:PrintDispelDebug()
         end
     elseif command == "gui" then
         if self.OpenInfoGUI then

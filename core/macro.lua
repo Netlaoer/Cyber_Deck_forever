@@ -107,9 +107,10 @@ function CyberDeck:PrintMacroDebug()
         self:Print("|cffff0000一个都没建|r —— 载入时应该在战斗中，脱战后 /reload 一次")
         return
     end
-    -- 探针：1/2 是动态宏（圣光术 unit1/unit2），最后一个静态槽是 /startattack
-    -- （213 = 6 动态×30 + 32 静态 + 1，即 CTRL-SHIFT-F3）
-    local probe = { { 1, "圣光术 unit1" }, { 2, "圣光术 unit2" }, { 213, "开始攻击" } }
+    -- 探针：1/2 动态宏，243 = /startattack，244 = [@mouseover]清洁术
+    -- （7 动态×30 = 210，静态槽从 211 起，33 -> 243、34 -> 244）
+    local probe = { { 1, "圣光术 unit1" }, { 2, "圣光术 unit2" },
+                    { 243, "开始攻击" }, { 244, "清洁术 unit0" } }
     for _, item in ipairs(probe) do
         local idx, label = item[1], item[2]
         local name = "s" .. idx

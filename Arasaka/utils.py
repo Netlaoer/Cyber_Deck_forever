@@ -545,7 +545,7 @@ def count_units_below_health(state_dict, health_threshold):
     except (TypeError, ValueError):
         return 0
 
-    for key, data in group.items():
+    for data in group.values():
         if not isinstance(data, dict):
             continue
         if not _role_not_zero(data):

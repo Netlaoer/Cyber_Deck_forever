@@ -14,7 +14,6 @@ local GetSpellChargeDuration = C_Spell.GetSpellChargeDuration
 local GetSpellCooldown = C_Spell.GetSpellCooldown
 local GetSpellName = C_Spell.GetSpellName
 local IsSpellKnown = C_SpellBook.IsSpellKnown
-local IsSpellInSpellBook = C_SpellBook.IsSpellInSpellBook
 local EvaluateColorFromBoolean = C_CurveUtil.EvaluateColorFromBoolean or function(cond, trueColor, falseColor)
     return cond and trueColor or falseColor
 end
@@ -29,7 +28,13 @@ local group = CyberDeck.group
 local groupList = CyberDeck.groupList
 local spells = {}
 local failedSpell, failedSpellId, failedSpellTimer, updateIndex = nil, nil, nil, 1
-local roleMap, spellsList, EnumPowerType = CyberDeck.roleMap, CyberDeck.spellsList, CyberDeck.EnumPowerType
+local roleMap, EnumPowerType = CyberDeck.roleMap, CyberDeck.EnumPowerType
+-- 施法失败要重试的技能（按名字判定：无限服法术 ID 随 rank 变，ID 表用不了）
+local FAILED_RETRY = {
+    ["自由祝福"] = true,
+    ["制裁之锤"] = true,
+    ["圣盾术"] = true,
+}
 local fallbackColor, falseValueBlack, falseValueWhite = CreateColor(0, 0, 1, 1), CreateColor(0, 0, 0, 1),
     CreateColor(0, 0, 1, 1)
 
@@ -96,7 +101,7 @@ target.friendCurve:SetType(Enum.LuaCurveType.Step)
 --                          通用函数
 -- ================================================================
 
--- 更新单位拥有玩家光环的数量
+-- 统计单位身上的负面光环数量（牧师「目标光环数量」块用）
 function CyberDeck:updateUnitAuraCount(unit)
     local auraInstanceIDs = self:GetAuraInstanceIDs(unit, "HARMFUL|PLAYER", 1, 4)
     if auraInstanceIDs then
@@ -105,7 +110,6 @@ function CyberDeck:updateUnitAuraCount(unit)
     return 0
 end
 
--- 更新单位距离
 local function updateUnitRange(unit)
     local minRange, maxRange = rc:GetRange(unit)
     return minRange, maxRange
@@ -116,7 +120,7 @@ end
 local succSpells = {}
 local succIndex = 1
 local function printSuccSpell(spellID)
-    if succSpells[spellID] or CyberDeck.spellsList[spellID] then return end
+    if succSpells[spellID] or (blocks.spells and blocks.spells[spellID]) then return end
     succSpells[spellID] = true
     print("[" .. spellID .. "]" .. " = { index = " .. succIndex .. ", }, -- " .. GetSpellName(spellID))
     succIndex = succIndex + 1
@@ -134,12 +138,16 @@ function CyberDeck:SPELL_UPDATE_CHARGES(_)
 end
 
 -- 驱散能力映射
+-- 无限服是经典（1.60.1）法术 ID：圣骑士只学到 纯净术(1152，驱疾病+中毒) 和 清洁术(4987，驱魔法+疾病+中毒)。
+-- 正式服那套 ID 在无限服一个都对不上 -> hasLearnedAnySpell 全 false -> 曲线 3/4 号点位写成 0
+-- -> 队友的“驱散”像素恒为 0 -> 决策层永远找不到要驱散的人（只有魔法那档侥幸命中 4987）。
+-- [2] 诅咒保持全 false：经典圣骑士没有驱诅咒的法术（清洁术只驱魔法/疾病/中毒）。
 local dispelAbilities = {
-    [1] = { 527, 360823, 4987, 115450, 88423, 77130 },              -- 魔法驱散
-    [2] = { 383016, 51886, 392378, 2782, 475 },                     -- 诅咒驱散
-    [3] = { 390632, 213634, 393024, 213644, 388874, 218164 },       -- 疾病驱散
-    [4] = { 392378, 2782, 393024, 213644, 388874, 218164, 365585 }, -- 中毒驱散
-    [11] = {}                                                       -- 流血驱散
+    [1] = { 527, 360823, 4987, 115450, 88423, 77130 },                      -- 魔法驱散
+    [2] = { 383016, 51886, 392378, 2782, 475 },                             -- 诅咒驱散
+    [3] = { 1152, 4987, 390632, 213634, 393024, 213644, 388874, 218164 },   -- 疾病驱散
+    [4] = { 1152, 4987, 392378, 2782, 393024, 213644, 388874, 218164, 365585 }, -- 中毒驱散
+    [11] = {}                                                               -- 流血驱散
 }
 
 -- 进攻驱散能力映射
@@ -148,7 +156,6 @@ local offensiveDispelAbilities = {
     [9] = { 2908 }, -- 激怒
 }
 
--- 检查玩家是否学习了多个法术中的任意一个
 local function hasLearnedAnySpell(spellIDs)
     for _, spellID in ipairs(spellIDs) do
         if IsSpellKnown(spellID) then
@@ -163,13 +170,11 @@ local function updateCooldownSpellKnown()
     if not blocks.spells then return end
     C_Timer.After(1, function()
         for spellID, info in pairs(blocks.spells) do
-            -- 无限服：key 已经是 ResolveSpellID 用 C_SpellBook.IsSpellKnown 过滤过的 rank ID，
-            -- 这里再用全局 IsSpellKnown 复核一遍，一旦两套 API 对 rank 的语义不一致，
-            -- 会把已学会的技能整体误标成 255，整条决策链失效。所以无限服直接信任解析结果。
-            local isKnown = CyberDeck.isForever and true or IsSpellKnown(spellID)
-            if not CyberDeck.isForever and info.inSpellBook then
-                isKnown = IsSpellInSpellBook(spellID)
-            end
+            -- key 已经是 ResolveSpellID 用 C_SpellBook.IsSpellKnown 过滤过的 rank ID，
+            -- 直接信任解析结果。正式服那套全局 IsSpellKnown / IsSpellInSpellBook 复核在这里
+            -- 不适用：无限服是经典技能组，两套 API 对 rank 的语义不一致，
+            -- 会把已学会的技能整体误标成 255，整条决策链失效。
+            local isKnown = true
             local index = info.index
             if isKnown or info.forcedKnown then
                 spells[spellID] = info
@@ -180,11 +185,9 @@ local function updateCooldownSpellKnown()
     end)
 end
 
--- 更新法术已知状态
 function CyberDeck:updateSpellKnown()
     updateCooldownSpellKnown()
 
-    -- 动态生成防御驱散能力
     local dispelCapabilities = {
         [1] = false,  -- 魔法驱散
         [2] = false,  -- 疾病驱散
@@ -192,7 +195,6 @@ function CyberDeck:updateSpellKnown()
         [4] = false,  -- 中毒驱散
         [11] = false, -- 流血
     }
-    -- 动态生成进攻驱散能力
     local offensiveDispelCapabilities = {
         [1] = false, -- 魔法
         [9] = false, -- 激怒
@@ -233,6 +235,151 @@ function CyberDeck:updateSpellKnown()
     end
 end
 
+-- secret 上下文探测：/cy secrets
+-- 无限服 1.60.1 带零售同款的 Secret Values 机制：C_Secrets 的谓词能直接问
+-- 「当前上下文里这一类数据会不会变成 secret 值」，比逐字段试读准得多
+-- （逐字段试读只能告诉你「这一次读到了什么」，不能告诉你「什么时候会变」）。
+-- 用法：/cy secrets      —— 脱战时跑一次
+--       /cy secrets 战斗 —— 战斗中再跑一次，对比两组的差异
+function CyberDeck:PrintSecretContext()
+    print("|cff00ff00[Cyber Deck]|r secret 上下文探测")
+
+    if not C_Secrets then
+        print("  |cffff0000当前客户端没有 C_Secrets|r（该客户端未启用 secret 机制，所有值都可读）")
+        return
+    end
+
+    local inCombat = UnitAffectingCombat("player")
+    print(("  上下文：%s   地图限制：%s"):format(
+        inCombat and "|cffff0000战斗中|r" or "脱战",
+        (C_Secrets.IsAddOnRestrictionActive and C_Secrets.IsAddOnRestrictionActive() or false)
+            and "|cffff0000受限|r" or "普通"))
+
+    -- 谓词清单：名称 -> 调用方式
+    local checks = {
+        { "光环",       function() return C_Secrets.ShouldAurasBeSecret() end },
+        { "冷却",       function() return C_Secrets.ShouldCooldownsBeSecret() end },
+        { "单位身份",   function() return C_Secrets.ShouldUnitIdentityBeSecret("target") end },
+        { "单位属性",   function() return C_Secrets.ShouldUnitStatsBeSecret() end },
+        { "威胁值",     function() return C_Secrets.ShouldUnitThreatValuesBeSecret("target", "target") end },
+    }
+
+    print("  |cff888888全局谓词（对所有单位一致）|r")
+    for _, c in ipairs(checks) do
+        local ok, v = pcall(c[2])
+        if not ok then
+            print(("    %-10s |cffff0000调用失败|r"):format(c[1]))
+        else
+            print(("    %-10s %s"):format(c[1],
+                v and "|cffff0000会变 secret|r" or "|cff00ff00可读|r"))
+        end
+    end
+
+    print("  |cff888888逐单位谓词（每个单位单独问）|r")
+    local units = { "player", "target", "focus" }
+    for i = 1, 5 do
+        if UnitExists("party" .. i) then units[#units + 1] = "party" .. i end
+    end
+    for _, unit in ipairs(units) do
+        if UnitExists(unit) then
+            local parts = {}
+            local fns = {
+                { "身份", "ShouldUnitIdentityBeSecret", function() return C_Secrets.ShouldUnitIdentityBeSecret(unit) end },
+                { "威胁", "ShouldUnitThreatValuesBeSecret", function() return C_Secrets.ShouldUnitThreatValuesBeSecret(unit, "target") end },
+                { "施法", "ShouldUnitSpellCastingBeSecret", function() return C_Secrets.ShouldUnitSpellCastingBeSecret(unit) end },
+                { "血上限", "ShouldUnitHealthMaxBeSecret", function() return C_Secrets.ShouldUnitHealthMaxBeSecret(unit) end },
+                { "能量", "ShouldUnitPowerBeSecret", function() return C_Secrets.ShouldUnitPowerBeSecret(unit, 0) end },
+            }
+            for _, f in ipairs(fns) do
+                if type(C_Secrets[f[2]]) ~= "function" then
+                    parts[#parts + 1] = ("%s=—"):format(f[1])
+                else
+                    local ok, v = pcall(f[3])
+                    if not ok then
+                        parts[#parts + 1] = ("%s=!err"):format(f[1])
+                    else
+                        parts[#parts + 1] = ("%s=%s"):format(f[1], v and "S" or "ok")
+                    end
+                end
+            end
+            print(("    %-10s %s"):format(unit, table.concat(parts, "  ")))
+        end
+    end
+
+    -- 单位比较（UnitIsUnit 在受限上下文会返回 nil 而不是 secret）
+    if C_Secrets.CanCompareUnitTokens then
+        local cmp = C_Secrets.CanCompareUnitTokens("player", "target")
+        print(("  |cff888888UnitIsUnit 可用|r：%s"):format(cmp and "是" or "否（返回 nil）"))
+    end
+
+    -- 单个法术的光环保密等级（比全局谓词更精确：只有个别法术被标记 secret）
+    -- GetSpellAuraSecrecy 返回 Enum.SecrecyLevel 枚举，不是布尔
+    if C_Secrets.GetSpellAuraSecrecy and Enum and Enum.SecrecyLevel then
+        print("  |cff888888单个法术的光环保密等级（NeverSecret = 任何时候都可读）|r")
+        local probes = { 4987, 1152, 20927, 20473, 25780, 20271 }
+        for _, spellID in ipairs(probes) do
+            local ok, level = pcall(C_Secrets.GetSpellAuraSecrecy, spellID)
+            if not ok then
+                print(("    %-8d |cffff0000查询失败|r"):format(spellID))
+            else
+                local name
+                if level == Enum.SecrecyLevel.NeverSecret then
+                    name = "|cff00ff00NeverSecret|r 永远可读"
+                elseif level == Enum.SecrecyLevel.AlwaysSecret then
+                    name = "|cffff0000AlwaysSecret|r 永远是 secret"
+                elseif level == Enum.SecrecyLevel.ContextuallySecret then
+                    name = "|cffff0000ContextuallySecret|r 视上下文而定"
+                else
+                    name = "其它（值=" .. tostring(level) .. "）"
+                end
+                print(("    %-8d %s"):format(spellID, name))
+            end
+        end
+    end
+
+    print("  |cff888888提示|r：S = 该项在当前上下文会变成 secret 值（不能比较/算术）")
+end
+
+-- 驱散能力探测：/cy dispelprobe
+-- 曲线点位（也就是写进像素的“驱散类型”）完全由 hasLearnedAnySpell 决定，
+-- 所以一旦能力表里的法术 ID 对不上服务器，这里就会显示“不会”并把点位算成 0。
+-- 顺便打印各单位的可驱散减益条数（只看数量，不碰 secret 的 color.b）。
+function CyberDeck:PrintDispelDebug()
+    local typeNames = { [1] = "魔法", [2] = "诅咒", [3] = "疾病", [4] = "中毒" }
+    print("|cff00ff00[Cyber Deck]|r 驱散能力探测（曲线点位 = 写进像素的驱散类型）")
+
+    for t = 1, 4 do
+        local hit = nil
+        for _, spellID in ipairs(dispelAbilities[t]) do
+            if IsSpellKnown(spellID) then
+                hit = spellID
+                break
+            end
+        end
+        print(("  类型%s(%d)  点位=%s  命中法术=%s  列表[%s]"):format(
+            typeNames[t], t,
+            hit and (t .. "/255") or "|cffff00000（检测不到）|r",
+            hit and tostring(hit) or "-",
+            table.concat(dispelAbilities[t], ",")))
+    end
+
+    local function count(unit, label)
+        local ids = CyberDeck:GetAuraInstanceIDs(unit, "HARMFUL|RAID_PLAYER_DISPELLABLE", 1, 4)
+        print(("  %-10s 可驱散减益 %d 条"):format(label, ids and #ids or 0))
+    end
+
+    count("player", "自己")
+    for i = 1, 4 do
+        local u = "party" .. i
+        if UnitExists(u) then
+            count(u, ("队友%d"):format(i))
+        end
+    end
+    if UnitExists("target") then
+        count("target", "当前目标")
+    end
+end
+
 -- ================================================================
 --                          玩家信息
 -- ================================================================
@@ -247,21 +394,14 @@ function CyberDeck:updatePlayerBlocks()
     self:updatePlayerMoving(IsPlayerMoving())       -- 6.移动
     self:updatePlayerCastingInfo()                  -- 7.施法
     self:updatePlayerChannelingInfo()               -- 8.引导
-    self:updatePlayerEmpowerInfo()                  -- 9.蓄力  10.蓄力层数
     self:updatePlayerHealth()                       -- 11.生命值
     self:updatePlayerPowerType()                    -- 12.能量值
-    self:updatePlayerAssistant()                    -- 13.一键辅助
-    -- 14. 法术失败
     self:updateTargetValid()                        -- 15.目标类型
     self:updateGroupType()                          -- 16.队伍类型
     self:updateGroupCount()                         -- 17.队伍人数
-    -- 18. 19. 更新boss战ID和难度
-    self:updateHeroTalent()                         -- 20.英雄天赋
 
     self:updatePlayerBarInfo()                      -- 创建玩家bar信息
     self:updateShapeshiftForm()                     -- 姿态
-    self:updatePlayerStagger()                      -- 酒池
-    self:updateRune()                               -- 符文
     self:updateTargetRangeBlock()                   -- 目标距离
     self:updateTargetHealth()                       -- 目标生命值
     self:updateEnemyCount()                         -- 敌人数量
@@ -273,7 +413,6 @@ function CyberDeck:updatePlayerBlocks()
     end)
 end
 
--- 载入玩家blocks配置
 function CyberDeck:loadPlayerBlocks(specIndex)
     if not specIndex or not self.ClassBlocks then
         return
@@ -306,7 +445,7 @@ function CyberDeck:loadPlayerBlocks(specIndex)
         elseif v.type == "spell" then
             -- 无限服按技能名解析到已学会的 rank ID（技能带等级，正式服 ID 不适用）
             local spellID = v.spellId
-            if not spellID and v.name and self.isForever then
+            if not spellID and v.name then
                 spellID = self:ResolveSpellID(v.name)
             end
             if not spellID then
@@ -344,7 +483,6 @@ function CyberDeck:loadPlayerBlocks(specIndex)
     self.blocks = blocks
 end
 
--- 载入玩家宏
 function CyberDeck:loadPlayerMacros()
     if not self.MacrosList then
         return
@@ -353,7 +491,6 @@ function CyberDeck:loadPlayerMacros()
     self:CreateMacro(m.dynamicSpells, m.staticSpells, m.specialSpells)
 end
 
--- 1. 首次登录获取角色信息
 function CyberDeck:GetCharacterInfo()
     self.db.char.level = UnitLevel("player")
     self.state.name = UnitName("player")
@@ -361,23 +498,14 @@ function CyberDeck:GetCharacterInfo()
     self.state.classColor = RAID_CLASS_COLORS[self.state.classFilename].colorStr
 end
 
--- 2. 首次登录获取玩家专精信息
 function CyberDeck:GetCharacterSpecInfo()
-    if self.isForever then
-        self.state.specIndex = self:GetActiveSpecIndex()
-        local info = self:GetForeverSpecInfo(self.state.specIndex)
-        self.state.specID = info.id
-        self.state.specName = info.name
-        self.state.specRole = info.role
-        self.state.specRange = info.range
-    else
-        self.state.specIndex = C_SpecializationInfo.GetSpecialization()
-        local specID, specName, _, _, role = C_SpecializationInfo.GetSpecializationInfo(self.state.specIndex)
-        self.state.specID = specID
-        self.state.specName = specName
-        self.state.specRole = role
-        self.state.specRange = self.rangeSpecID[specID]
-    end
+    -- 无限服没有专精系统：专精索引按天赋树判定（GetActiveSpecIndex），名称/职责/射程取无限服表
+    self.state.specIndex = self:GetActiveSpecIndex()
+    local info = self:GetForeverSpecInfo(self.state.specIndex)
+    self.state.specID = info.id
+    self.state.specName = info.name
+    self.state.specRole = info.role
+    self.state.specRange = info.range
     self.state.isDead = UnitIsDeadOrGhost("player")
     self.state.isChatOpen = false
     self.state.casting = false
@@ -393,24 +521,14 @@ function CyberDeck:GetCharacterSpecInfo()
     self:CreatTexture(blocks.state["专精"], self.state.specIndex / 255)
 end
 
--- 2. 更新玩家专精信息
 function CyberDeck:updatePlayerSpecInfo()
     self:clearAllTextures()
-    if self.isForever then
-        self.state.specIndex = self:GetActiveSpecIndex()
-        local info = self:GetForeverSpecInfo(self.state.specIndex)
-        self.state.specID = info.id
-        self.state.specName = info.name
-        self.state.specRole = info.role
-        self.state.specRange = info.range
-    else
-        self.state.specIndex = C_SpecializationInfo.GetSpecialization()
-        local specID, specName, _, _, role = C_SpecializationInfo.GetSpecializationInfo(self.state.specIndex)
-        self.state.specID = specID
-        self.state.specName = specName
-        self.state.specRole = role
-        self.state.specRange = self.rangeSpecID[specID]
-    end
+    self.state.specIndex = self:GetActiveSpecIndex()
+    local info = self:GetForeverSpecInfo(self.state.specIndex)
+    self.state.specID = info.id
+    self.state.specName = info.name
+    self.state.specRole = info.role
+    self.state.specRange = info.range
     self:loadPlayerBlocks(self.state.specIndex) -- 载入玩家blocks配置
 
     self:updateSpellKnown()                     -- 更新法术已知状态
@@ -419,21 +537,18 @@ function CyberDeck:updatePlayerSpecInfo()
     self:CreatTexture(blocks.state["专精"], self.state.specIndex / 255)
 end
 
--- 4. 更新玩家有效性
 function CyberDeck:updatePlayerValid()
     local valid = not state.isDead and not state.mounted and not state.isChatOpen and not state.drinkStatus
     state.valid = valid and 1 / 255 or 0
     self:CreatTexture(blocks.state["有效性"], state.valid)
 end
 
--- 5. 更新玩家战斗状态
 function CyberDeck:updatePlayerCombat()
     local combat = UnitAffectingCombat("player")
     state.combat = combat and 1 / 255 or 0
     self:CreatTexture(blocks.state["战斗"], state.combat)
 end
 
--- 6. 更新玩家移动状态
 function CyberDeck:updatePlayerMoving(boolean)
     state.drinkStatus = false
     self:updatePlayerValid()
@@ -441,7 +556,6 @@ function CyberDeck:updatePlayerMoving(boolean)
     self:CreatTexture(blocks.state["移动"], state.moving)
 end
 
--- 7. 更新玩家施法状态
 function CyberDeck:updatePlayerCastingInfo()
     if state.casting then
         local cast = UnitCastingDuration("player")
@@ -461,7 +575,6 @@ function CyberDeck:updatePlayerCastingInfo()
     end
 end
 
--- 8. 更新玩家引导状态
 function CyberDeck:updatePlayerChannelingInfo()
     if state.channeling then
         local channel = UnitChannelDuration("player")
@@ -481,46 +594,6 @@ function CyberDeck:updatePlayerChannelingInfo()
     end
 end
 
--- 9. 10. 更新玩家蓄力状态（仅唤魔师；圣骑士等没有这两个像素块时直接跳过）
-function CyberDeck:updatePlayerEmpowerInfo()
-    local empowerIndex = blocks and blocks.state and blocks.state["蓄力"]
-    local stageIndex = blocks and blocks.state and blocks.state["蓄力层数"]
-    if not empowerIndex and not stageIndex then
-        state.empowerDuration = 0
-        state.empowerStage = 0
-        return
-    end
-    if state.empowering then
-        local empowerStages = UnitEmpoweredStageDurations("player")
-        local empowerDuration = UnitEmpoweredChannelDuration("player")
-        if empowerDuration and empowerIndex then
-            local empowerDurationColor = empowerDuration:EvaluateRemainingDuration(castCurve)
-            ---@diagnostic disable-next-line: param-type-mismatch
-            local _, _, b = empowerDurationColor:GetRGB()
-            state.empowerDuration = b
-            self:CreatTexture(empowerIndex, state.empowerDuration)
-        end
-        if empowerStages and stageIndex then
-            for k, v in pairs(empowerStages) do
-                local empower = v:EvaluateRemainingDuration(castCurve)
-                ---@diagnostic disable-next-line: param-type-mismatch
-                local _, _, b = empower:GetRGB()
-                state.empowerStage = (k - 1) / 255
-                self:CreatTexture(stageIndex, state.empowerStage)
-                if b > 0 then
-                    break
-                end
-            end
-        end
-    else
-        state.empowerDuration = 0
-        state.empowerStage = 0
-        if empowerIndex then self:CreatTexture(empowerIndex, 0) end
-        if stageIndex then self:CreatTexture(stageIndex, 0) end
-    end
-end
-
--- 11. 更新玩家血量信息
 function CyberDeck:updatePlayerHealth()
     local healthPercent = UnitHealthPercent("player", false, curve100)
     ---@diagnostic disable-next-line: param-type-mismatch
@@ -536,7 +609,6 @@ local specialPowerMap = {
     ["SOUL_SHARDS"] = "灵魂碎片",
     ["CHI"] = "真气",
 }
--- 12. 更新玩家能量值
 function CyberDeck:updatePlayerPower(powerType)
     if blocks then
         local power = UnitPower("player", EnumPowerType[powerType])
@@ -553,7 +625,7 @@ function CyberDeck:updatePlayerPower(powerType)
             if blockIndex then
                 self:CreatTexture(blockIndex, (power or 0) / 255)
             end
-        elseif self.isForever then
+        else
             -- 无限服没有秘密值系统：法力/怒气等直接按百分比写入 12.能量值
             local maxPower = UnitPowerMax("player", EnumPowerType[powerType])
             local blockIndex = blocks.state["能量值"]
@@ -570,31 +642,12 @@ function CyberDeck:updatePlayerPowerType()
     self:updatePlayerPower(powerType)
 end
 
--- 13. 更新玩家[一键辅助]
-function CyberDeck:updatePlayerAssistant()
-    local index = blocks and blocks.state and blocks.state["一键辅助"]
-    if not index then
-        -- 无限服没有一键辅助，且圣骑士块表里不建这个块
-        state.assistantSpell = 0
-        return
-    end
-    local spellIndex = 0
-    if C_AssistedCombat and C_AssistedCombat.GetNextCastSpell then
-        local ok, spellId = pcall(C_AssistedCombat.GetNextCastSpell)
-        if ok and type(spellId) == "number" and spellsList[spellId] then
-            spellIndex = spellsList[spellId].index or 0
-        end
-    end
-    state.assistantSpell = spellIndex / 255
-    self:CreatTexture(index, state.assistantSpell)
-end
-
--- 14. 更新玩家法术失败
 function CyberDeck:updateSpellFailed(spellID)
     local isUsable = C_Spell.IsSpellUsable(spellID)
 
-    if spellsList[spellID] and spellsList[spellID].failed then
-        failedSpell = spellsList[spellID].index
+    local info = blocks.spells and blocks.spells[spellID]
+    if info and FAILED_RETRY[info.name] then
+        failedSpell = info.index
         state.failedSpell = (failedSpell or 0) / 255
     else
         failedSpell = nil
@@ -619,7 +672,6 @@ function CyberDeck:updateSpellFailed(spellID)
     self:CreatTexture(blocks.state["法术失败"], state.failedSpell)
 end
 
--- 14. 通过施法成功更新玩家法术失败
 function CyberDeck:updateFailedSpellBySuccess(spellID)
     if spellID ~= failedSpellId then return end
     failedSpell = nil
@@ -628,7 +680,6 @@ function CyberDeck:updateFailedSpellBySuccess(spellID)
     self:CreatTexture(blocks.state["法术失败"], 0)
 end
 
--- 15. 更新目标类型
 local function getTargetDispelType()
     local unit = "target"
     if not UnitExists(unit) then return 0 end
@@ -665,6 +716,8 @@ function CyberDeck:updateTargetValid()
     self:CreatTexture(blocks.state["目标类型"], target.type)
 end
 
+
+-- 更新目标光环数量（牧师「苦修」决策用：目标身上有负面光环才值得驱）
 function CyberDeck:updateTargetAuraCount()
     if not UnitExists("target") then return end
     if blocks and blocks.state["目标光环数量"] then
@@ -674,7 +727,6 @@ function CyberDeck:updateTargetAuraCount()
     end
 end
 
--- 16. 更新玩家队伍类型
 function CyberDeck:updateGroupType()
     local index = 0
     if UnitInRaid("player") then
@@ -686,62 +738,12 @@ function CyberDeck:updateGroupType()
     self:CreatTexture(blocks.state["队伍类型"], state.groupType)
 end
 
--- 17. 更新玩家队伍人数
 function CyberDeck:updateGroupCount()
     local count = GetNumGroupMembers()
     state.groupCount = count / 255 or 0
     self:CreatTexture(blocks.state["队伍人数"], state.groupCount)
 end
 
--- 18. 19. 更新boss战ID和难度
-function CyberDeck:updateEncounterID(encounterID, difficultyID)
-    state.encounterID = encounterID
-    --[[更新难度ID
-            1 = "5人本普通", -- Normal (Dungeon)
-            2 = "5人本英雄", -- Heroic (Dungeon)
-            14 = "团本普通", -- Normal (Raid)
-            15 = "团本英雄", -- Heroic (Raid)
-            16 = "团本史诗", -- Mythic (Raid)
-            17 = "团本随机", -- Looking (Raid)
-            23 = "5人本史诗", -- Mythic (Dungeon)
-        ]]
-    local id = self.bossID and self.bossID[encounterID] or 0
-    if id then
-        state.bossID = id / 255 or 0
-        self:CreatTexture(blocks.state["首领战"], state.bossID)
-    else
-        state.bossID = 0
-        self:CreatTexture(blocks.state["首领战"], state.bossID)
-    end
-    state.difficultyID = difficultyID
-    self:CreatTexture(blocks.state["难度"], (state.difficultyID or 0) / 255)
-end
-
--- 20. 更新玩家英雄天赋
-function CyberDeck:updateHeroTalent()
-    if self.isForever then
-        -- 无限服没有英雄天赋
-        self.state.heroTalent = 0
-        if blocks.state["英雄天赋"] then
-            self:CreatTexture(blocks.state["英雄天赋"], 0)
-        end
-        return
-    end
-    if self.heroTalents and blocks.state["英雄天赋"] then
-        C_Timer.After(1, function()
-            self.state.heroTalent = 0
-            for spellID, index in pairs(self.heroTalents) do
-                if IsSpellKnown(spellID) or IsSpellInSpellBook(spellID) then
-                    self.state.heroTalent = index
-                    break
-                end
-            end
-            self:CreatTexture(blocks.state["英雄天赋"], self.state.heroTalent / 255)
-        end)
-    end
-end
-
--- 创建玩家bar信息
 function CyberDeck:updatePlayerBarInfo()
     if blocks.countBars then
         for k, v in pairs(blocks.countBars) do
@@ -766,7 +768,8 @@ function CyberDeck:updatePlayerCasting(spellId)
         end
     end
     if blocks.state["施法技能"] then
-        local castingSpell = spellsList[spellId] and spellsList[spellId].index or 0
+        local spellInfo = blocks.spells and blocks.spells[spellId]
+        local castingSpell = (spellInfo and (spellInfo.index or spellInfo.charge)) or 0
         state.castingSpell = castingSpell / 255 or 0
         if castingSpell then
             self:CreatTexture(blocks.state["施法技能"], state.castingSpell)
@@ -776,55 +779,19 @@ function CyberDeck:updatePlayerCasting(spellId)
     end
 end
 
--- 更新玩家配置
 function CyberDeck:updatePlayerConfig()
     local c = self.db and self.db.char
     if not c or not blocks then return end
     if blocks.state["爆发开关"] then
         self:CreatTexture(blocks.state["爆发开关"], (c.cooldowns or 0) / 255)
     end
-    if blocks.state["AOE开关"] then
-        self:CreatTexture(blocks.state["AOE开关"], (c.aoeMode or 0) / 255)
-    end
-    if blocks.state["输出模式"] then
-        self:CreatTexture(blocks.state["输出模式"], (c.dpsMode or 0) / 255)
-    end
-    if blocks.state["爆发药水开关"] then
-        self:CreatTexture(blocks.state["爆发药水开关"], (c.potion or 0) / 255)
-    end
     if blocks.state["驱散开关"] then
         self:CreatTexture(blocks.state["驱散开关"], (c.dispel or 1) / 255)
     end
 end
 
--- 更新玩家酒池百分比
-function CyberDeck:updatePlayerStagger()
-    if blocks and blocks.state["酒池"] then
-        local unit = "player"
-        local damage = UnitStagger(unit)
-        local maxHealth = UnitHealthMax(unit)
-        local staggerPercent = damage / maxHealth * 100
-        state.staggerPercent = (staggerPercent or 0) / 255
-        self:CreatTexture(blocks.state["酒池"], state.staggerPercent)
-    end
-end
 
--- 更新玩家符文
-function CyberDeck:updateRune()
-    if blocks and blocks.state["符文"] then
-        local total = 0
-        for i = 1, 6 do
-            local runeCount = GetRuneCount(i)
-            if runeCount then
-                total = total + runeCount
-            end
-        end
-        state.runeCount = total / 255 or 0
-        self:CreatTexture(blocks.state["符文"], state.runeCount)
-    end
-end
 
--- 获取玩家形态
 function CyberDeck:updateShapeshiftForm()
     local shapeshiftFormID = GetShapeshiftFormID() or 0
     state.shapeshiftFormID = shapeshiftFormID / 255
@@ -833,67 +800,8 @@ function CyberDeck:updateShapeshiftForm()
     end
 end
 
-local diseaseJudgeTimer = nil
-function CyberDeck:updateDiseaseJudge()
-    if blocks and blocks.state["疾病判断"] then
-        state.diseaseJudge = 1 / 255 or 0
-        self:CreatTexture(blocks.state["疾病判断"], state.diseaseJudge)
-        if diseaseJudgeTimer then
-            diseaseJudgeTimer:Cancel()
-            diseaseJudgeTimer = nil
-        end
-        diseaseJudgeTimer = C_Timer.NewTimer(1, function()
-            state.diseaseJudge = 0
-            self:CreatTexture(blocks.state["疾病判断"], state.diseaseJudge)
-            diseaseJudgeTimer = nil
-        end)
-    end
-end
 
--- 更新防御光环
-function CyberDeck:GetDefensiveAuraInstanceID(unit, info)
-    if unit ~= "player" then return end
-    -- 只有恶魔猎手有「防御光环」这块；其它职业连读都不必读
-    if not (blocks and blocks.state and blocks.state["防御光环"]) then return end
-    -- 战斗中 UNIT_AURA 的 addedAuras 是 secret table，此时调 aura API 会抛
-    -- "Auras cannot be accessed when secret"，必须提前退出
-    if UnitAffectingCombat("player") then return end
-    if info.addedAuras then
-        for i = 1, 2 do
-            local ok, aura = pcall(C_UnitAuras.GetBuffDataByIndex, unit, i, "HELPFUL|BIG_DEFENSIVE")
-            if ok and aura and not (type(issecretvalue) == "function" and issecretvalue(aura)) then
-                state.DefensiveAuraInstanceID = aura.auraInstanceID
-            end
-        end
-    end
-    if safeTruthy(info.removedAuraInstanceIDs) then
-        for _, v in pairs(info.removedAuraInstanceIDs) do
-            if v == state.DefensiveAuraInstanceID then
-                state.DefensiveAuraInstanceID = nil
-            end
-        end
-    end
-end
 
-function CyberDeck:GetDefensiveAuraDuration()
-    if blocks and blocks.state["防御光环"] then
-        if state.DefensiveAuraInstanceID then
-            local okdur, duration = pcall(C_UnitAuras.GetAuraDuration, "player", state.DefensiveAuraInstanceID)
-            if okdur and duration then
-                local auraduration = duration:EvaluateRemainingDuration(curve255)
-                ---@diagnostic disable-next-line: param-type-mismatch
-                local _, _, b = auraduration:GetRGB()
-                self:CreatTexture(blocks.state["防御光环"], b)
-            else
-                self:CreatTexture(blocks.state["防御光环"], 0)
-            end
-        else
-            self:CreatTexture(blocks.state["防御光环"], 0)
-        end
-    end
-end
-
--- 更新法术冷却信息
 function CyberDeck:updateSpellCooldown()
     if not spells then return end
     for spellID, info in pairs(spells) do
@@ -1002,7 +910,6 @@ end
 
 ]]
 
--- 更新目标是否可以攻击
 function CyberDeck:updateTargetType()
     target.canAttack = UnitCanAttack("player", "target")
     target.canAssist = UnitCanAssist("player", "target")
@@ -1105,13 +1012,11 @@ function CyberDeck:updateTargetCastingInfo()
     end
 end
 
--- 更新目标是否死亡
 function CyberDeck:updateTargetDeath()
     target.isDead = UnitIsDeadOrGhost("target")
     self:updateTargetValid()
 end
 
--- 更新目标生命值
 function CyberDeck:updateTargetHealth()
     local healthPercent = UnitHealthPercent("target", false, curve100)
     ---@diagnostic disable-next-line: param-type-mismatch
@@ -1122,7 +1027,6 @@ function CyberDeck:updateTargetHealth()
     end
 end
 
--- 更新目标完整信息
 function CyberDeck:updateTargetFullInfo()
     self:updateTargetType()
     self:updateTargetDeath()
@@ -1151,7 +1055,6 @@ local testMap = {
 local testEncounter = {
     [2563] = true, -- 茂林古树
 }
--- 更新范围内敌方姓名版数量
 function CyberDeck:updateEnemyCount()
     local count = 0
     local hasAuraCount = 0
@@ -1191,7 +1094,6 @@ function CyberDeck:updateEnemyCount()
     end
 end
 
--- 通过施放成功获取喝水状态
 local drinkStatusTimer = nil
 function CyberDeck:updateDrinkStatus(spellID)
     local name = C_Spell.GetSpellName(spellID)
@@ -1288,7 +1190,6 @@ local function updateUnitInSight(unit)
     local obj = group[unit]
     if not obj then return end
     obj.inSight = false
-    -- print("目标不在视野中", obj.name)
     if obj.inSightTimer then
         obj.inSightTimer:Cancel()
         obj.inSightTimer = nil
@@ -1296,7 +1197,6 @@ local function updateUnitInSight(unit)
     obj.inSightTimer = C_Timer.NewTimer(1.5, function()
         obj.inSight = true
         obj.inSightTimer = nil
-        -- print("目标在视野中", obj.name)
         CyberDeck:updateUnitValid(unit)
     end)
     CyberDeck:updateUnitValid(unit)
@@ -1471,7 +1371,6 @@ function CyberDeck:ZONE_CHANGED()
     state.mapID = C_Map.GetBestMapForUnit("player") or 0
     state.mapInfo = C_Map.GetMapInfo(state.mapID)
     state.subzone = GetSubZoneText()
-    -- print("ZONE_CHANGED", state.mapID, state.mapInfo, state.subzone)
     if GetBindLocation() == state.subzone then
         self:Print("欢迎回家!")
     end
@@ -1481,7 +1380,6 @@ function CyberDeck:ZONE_CHANGED_INDOORS()
     state.mapID = C_Map.GetBestMapForUnit("player") or 0
     state.mapInfo = C_Map.GetMapInfo(state.mapID)
     state.subzone = GetSubZoneText()
-    -- print("ZONE_CHANGED_INDOORS", state.mapID, state.mapInfo, state.subzone)
     if GetBindLocation() == state.subzone then
         self:Print("欢迎回家!")
     end
@@ -1489,7 +1387,6 @@ end
 
 function CyberDeck:PLAYER_ENTERING_WORLD()
     state.mapID = C_Map.GetBestMapForUnit("player") or 0
-    self:updateHeroTalent()
 end
 
 function CyberDeck:PLAYER_TALENT_UPDATE()
@@ -1498,7 +1395,6 @@ function CyberDeck:PLAYER_TALENT_UPDATE()
     -- 事件触发时天赋点数可能还是旧值（服务器未同步），再延迟刷两次兜底。
     -- 无限服切天赋的 spellID 不是正式服的 384255 / 200749，那条延迟路径走不到，
     -- 所以必须在这里补，否则 GUI 会一直显示切换前的专精。
-    if not self.isForever then return end
     for _, delay in ipairs({ 0.5, 2.0 }) do
         C_Timer.After(delay, function()
             if InCombatLockdown() then return end
@@ -1533,7 +1429,6 @@ function CyberDeck:PLAYER_MOUNT_DISPLAY_CHANGED()
     self:updatePlayerMounted()
 end
 
--- 战斗状态更新
 function CyberDeck:PLAYER_REGEN_DISABLED()
     self:updateTargetType()
     self:updatePlayerCombat()
@@ -1544,7 +1439,6 @@ function CyberDeck:PLAYER_REGEN_ENABLED()
     self:updatePlayerCombat()
 end
 
--- 移动状态更新
 function CyberDeck:PLAYER_STARTED_MOVING()
     self:updatePlayerMoving(true)
 end
@@ -1564,11 +1458,9 @@ function CyberDeck:UNIT_SPELLCAST_SENT(_, unitTarget, targetName, castGUID, spel
                 break
             end
         end
-        -- print(state.castTargetUnit, state.castTargetName, state.castTargetIndex)
     end
 end
 
--- 施法状态
 function CyberDeck:UNIT_SPELLCAST_START(_, unitTarget, castGUID, spellID, castBarID)
     if unitTarget == "player" then
         state.casting = true
@@ -1582,7 +1474,6 @@ end
 
 function CyberDeck:UNIT_SPELLCAST_STOP(_, unitTarget, castGUID, spellID, castBarID)
     if unitTarget == "player" then
-        -- print("结束施法时间:", GetTime())
         updateUnitIncomingHealsCurve2()
         state.casting = false
         state.castTargetUnit = nil
@@ -1594,7 +1485,6 @@ function CyberDeck:UNIT_SPELLCAST_STOP(_, unitTarget, castGUID, spellID, castBar
     end
 end
 
--- 引导状态
 function CyberDeck:UNIT_SPELLCAST_CHANNEL_START(_, unitTarget, castGUID, spellID, castBarID)
     if unitTarget == "player" then
         state.channeling = true
@@ -1617,29 +1507,6 @@ function CyberDeck:UNIT_SPELLCAST_CHANNEL_STOP(_, unitTarget, castGUID, spellID,
     end
 end
 
--- 蓄力状态
-function CyberDeck:UNIT_SPELLCAST_EMPOWER_START(_, unitTarget, castGUID, spellID, castBarID)
-    if unitTarget == "player" then
-        state.empowering = true
-        state.empoweringSpellID = spellID
-        self:updatePlayerCasting(spellID)
-    elseif unitTarget == "target" then
-        target.empowering = true
-    end
-end
-
-function CyberDeck:UNIT_SPELLCAST_EMPOWER_STOP(_, unitTarget, castGUID, spellID, complete, interruptedBy, castBarID)
-    if unitTarget ~= "player" then
-        state.empowering = false
-        state.castTargetUnit = nil
-        state.castTargetName = nil
-        state.castTargetIndex = 0
-        self:updatePlayerCasting(0)
-    elseif unitTarget == "target" then
-        target.empowering = false
-    end
-end
-
 function CyberDeck:UNIT_SPELLCAST_SUCCEEDED(_, unitTarget, castGUID, spellID, castBarID)
     if unitTarget ~= "player" then return end
     -- 必须在 isSec 过滤之前：战斗中 spellID 可能被保护，
@@ -1649,22 +1516,9 @@ function CyberDeck:UNIT_SPELLCAST_SUCCEEDED(_, unitTarget, castGUID, spellID, ca
     end
     if isSec(spellID) then return end
     self:updateDrinkStatus(spellID)
-    -- printSuccSpell(spellID)
     self:updateFailedSpellBySuccess(spellID)
     self:updateAuraBySuccess(spellID, castBarID)
-    if spellID == 384255 then
-        self:ClearAllCyberDeckBars()
-        print("切换天赋")
-        C_Timer.After(1, function()
-            self:updatePlayerSpecInfo()
-        end)
-    elseif spellID == 200749 then
-        self:ClearAllCyberDeckBars()
-        print("切换专精")
-        C_Timer.After(1, function()
-            self:updatePlayerSpecInfo()
-        end)
-    end
+    -- 无限服没有正式服那套"切天赋/切专精"法术（384255 / 200749），改天赋走 PLAYER_TALENT_UPDATE
 end
 
 function CyberDeck:UNIT_SPELLCAST_FAILED(_, unitTarget, castGUID, spellID, castBarID)
@@ -1675,7 +1529,6 @@ function CyberDeck:UNIT_SPELLCAST_FAILED(_, unitTarget, castGUID, spellID, castB
 end
 
 function CyberDeck:SPELL_UPDATE_COOLDOWN(_, spellID)
-    -- self:Print(spellID, C_Spell.GetSpellName(spellID))
     if issecretvalue(spellID) then return end
     self:updateAuraBySpellCooldown(spellID)
 end
@@ -1705,21 +1558,18 @@ function CyberDeck:SPELL_ACTIVATION_OVERLAY_HIDE(_, spellId)
     self:updateAuraByActivationOverlayHide(spellId)
 end
 
-local potions = {
-    [241304] = "银月城生命药水",
-    [241305] = "银月城生命药水",
-    [241301] = "光注法力药水",
-    [241300] = "光注法力药水",
-    [5512] = "治疗石",
-    [224464] = "恶魔治疗石",
-    [241288] = "鲁莽药水",
-    [241289] = "鲁莽药水",
-    [241308] = "圣光潜力",
-    [241309] = "圣光潜力",
-}
+-- 关注的物品 ID 集合（取无限服物品组 core/forever.lua 的 F.itemGroups）
+-- 原来这里写的是正式服物品 ID（241304 银月城生命药水 / 224464 恶魔治疗石 等），
+-- 无限服一个都对不上 -> ITEM_COUNT_CHANGED 永远不触发 -> 物品数量不刷新。
+local trackedItems = {}
+for _, ids in pairs(CyberDeck.itemGroups or {}) do
+    for _, id in ipairs(ids) do
+        trackedItems[id] = true
+    end
+end
 
 function CyberDeck:ITEM_COUNT_CHANGED(_, itemID)
-    if potions[itemID] then
+    if trackedItems[itemID] then
         self:GetItemCount()
     end
 end
@@ -1727,7 +1577,6 @@ end
 function CyberDeck:UNIT_HEALTH(_, unit)
     if unit == "player" then
         self:updatePlayerHealth()
-        self:updatePlayerStagger()
     end
     if unit == "target" then
         self:updateTargetHealth()
@@ -1765,13 +1614,11 @@ function CyberDeck:UNIT_HEAL_PREDICTION(_, unit)
     end
 end
 
--- 能量更新
 function CyberDeck:UNIT_POWER_UPDATE(_, unit, powerType)
     if unit ~= "player" then return end
     self:updatePlayerPower(powerType)
 end
 
--- Hook 所有默认聊天框
 function CyberDeck:hookChatFrameEditBox()
     for i = 1, (NUM_CHAT_WINDOWS or 10) do
         local editBox = _G["ChatFrame" .. i .. "EditBox"]
@@ -1813,19 +1660,15 @@ function CyberDeck:UNIT_DIED(_, unitGUID)
 end
 
 function CyberDeck:SPELL_RANGE_CHECK_UPDATE()
-    -- updateNameplateCount()
 end
 
 function CyberDeck:ACTION_RANGE_CHECK_UPDATE(_, slot, isInRange, checksRange)
-    -- updateNameplateCount()
 end
 
 function CyberDeck:UI_ERROR_MESSAGE(_, errorType, message)
-    -- print(errorType, message)
     if message == "目标不在视野中" then
         updateUnitInSight(state.castTargetUnit)
     elseif message == "射程范围内无有效目标。" then
-        self:updateDiseaseJudge()
     end
 end
 
@@ -1835,13 +1678,11 @@ end
 
 function CyberDeck:SPELLS_CHANGED()
     self:readKeybindings()
-    if self.isForever then
-        -- 学会新技能/新 rank 后重建名称索引，并重新解析像素块里的技能
-        self:InvalidateSpellBookIndex()
-        if not InCombatLockdown() and self.state and self.state.specIndex then
-            self:loadPlayerBlocks(self.state.specIndex)
-            self:updateSpellKnown()
-        end
+    -- 学会新技能/新 rank 后重建名称索引，并重新解析像素块里的技能
+    self:InvalidateSpellBookIndex()
+    if not InCombatLockdown() and self.state and self.state.specIndex then
+        self:loadPlayerBlocks(self.state.specIndex)
+        self:updateSpellKnown()
     end
 end
 
@@ -1877,14 +1718,6 @@ function CyberDeck:UPDATE_SHAPESHIFT_FORMS()
     self:updatePlayerMounted()
 end
 
-function CyberDeck:ENCOUNTER_START(_, encounterID, encounterName, difficultyID, groupSize)
-    self:updateEncounterID(encounterID, difficultyID)
-end
-
-function CyberDeck:ENCOUNTER_END(_, encounterID, encounterName, difficultyID, groupSize, success)
-    self:updateEncounterID(0, 0)
-end
-
 function CyberDeck:TestFiltered(unit, auraInstanceID)
     local AuraFilters = {
         "HELPFUL",
@@ -1918,7 +1751,6 @@ function CyberDeck:TestFiltered(unit, auraInstanceID)
 end
 
 function CyberDeck:UNIT_AURA(_, unit, info)
-    self:GetDefensiveAuraInstanceID(unit, info)
     local obj = group[unit]
     if not obj then return end
     getAuraDispelTypeColor(unit)
@@ -1928,7 +1760,6 @@ function CyberDeck:UNIT_AURA(_, unit, info)
     end
     if safeTruthy(info.addedAuras) then
         for k, v in pairs(info.addedAuras) do
-            -- print("|cnGREEN_FONT_COLOR:新增光环: |r", v.auraInstanceID, v.spellId, v.name, v.duration)
             if not isSec(v.spellId) and v.sourceUnit == "player" then
                 obj.aura[v.auraInstanceID] = v
             end
@@ -1947,20 +1778,9 @@ function CyberDeck:UNIT_AURA(_, unit, info)
     end
     if safeTruthy(info.removedAuraInstanceIDs) then
         for _, v in pairs(info.removedAuraInstanceIDs) do
-            -- print("|cnRED_FONT_COLOR:移除光环: |r", v)
             obj.aura[v] = nil
         end
     end
-end
-
-function CyberDeck:ENCOUNTER_TIMELINE_EVENT_ADDED(_, eventInfo)
-
-end
-
-function CyberDeck:ENCOUNTER_TIMELINE_EVENT_REMOVED(_, eventID)
-end
-
-function CyberDeck:ENCOUNTER_TIMELINE_EVENT_STATE_CHANGED(_, eventID)
 end
 
 function CyberDeck:StartFrameUpdates()
@@ -1979,8 +1799,6 @@ function CyberDeck:OnUpdate(elapsed)
     -- 这里的函数必须确保能被访问到，如果是成员函数请加 self:
     self:updatePlayerCastingInfo()
     self:updatePlayerChannelingInfo()
-    self:updatePlayerEmpowerInfo()
-    self:updateTargetCastingInfo()
     self:updateUnitCastingOrChannelingInfo("target")
     pcall(self.updateUnitCastingOrChannelingInfo, self, "focus")
     self:updateGroupInRangeAndHealth()
@@ -1991,12 +1809,9 @@ function CyberDeck:OnUpdate(elapsed)
     -- 降到 0.12 与 Python 侧的 0.1 错开，避免两边同频导致一顿一顿。
     self.timeElapsed = self.timeElapsed + elapsed
     if self.timeElapsed > 0.12 then
-        self:GetDefensiveAuraDuration()
         self:updateSpellCooldown()
         self:OnUpdateUnitAura()
-        self:updateAuraBlocks()
-        self:updatePlayerAssistant()
-        self:updateRune()
+        self:updateAura()
         self:updateTargetRangeBlock()
         self:updateEnemyCount()
         self:updateItemCoolDown()

@@ -6,9 +6,9 @@ import sys              # 用于添加父目录到导入路径
 import yaml             # 加载 config.yml
 
 # 添加父目录到路径，用于导入 utils
-_FUYUTSUI_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if _FUYUTSUI_DIR not in sys.path:
-    sys.path.insert(0, _FUYUTSUI_DIR)
+_ARASAKA_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _ARASAKA_DIR not in sys.path:
+    sys.path.insert(0, _ARASAKA_DIR)
 
 # 解决 Windows 屏幕缩放问题（高 DPI 适配）
 try:
@@ -17,7 +17,7 @@ except Exception:
     pass
 
 # 配置路径：指向上级目录的通用 config.yml
-CONFIG_PATH = os.path.join(_FUYUTSUI_DIR, "config.yml")
+CONFIG_PATH = os.path.join(_ARASAKA_DIR, "config.yml")
 
 PIXELS_PER_ROW = 200  # 扫描 200 个数据点
 

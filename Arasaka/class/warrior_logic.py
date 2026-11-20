@@ -1,183 +1,249 @@
 # -*- coding: utf-8 -*-
-"""战士职业的基础逻辑。"""
+"""战士决策（魔兽世界无限服 1.60.1，60 级经典技能组 + 天赋树）。
 
-from utils import *
+专精：1 武器 / 2 狂怒 / 3 防护
+资源：怒气（能量值像素是怒气百分比，满 100）
+"""
 
-action_map = {
-    11: ("英勇投掷", "英勇投掷"),
-    12: ("战斗怒吼", "战斗怒吼"),
-    13: ("猛击", "猛击"),
-    14: ("撕裂", "撕裂"),
-    15: ("斩杀", "斩杀"),
-    16: ("剑刃风暴", "剑刃风暴"),
-    17: ("崩摧", "崩摧"),
-    18: ("致死打击", "致死打击"),
-    19: ("巨人打击", "巨人打击"),
-    20: ("顺劈斩", "顺劈斩"),
-    21: ("压制", "压制"),
-    22: ("横扫攻击", "横扫攻击"),
-    23: ("天神下凡", "天神下凡"),
-    24: ("旋风斩", "旋风斩"),
-    25: ("斩杀", "斩杀"),
-    26: ("嗜血", "嗜血"),
-    27: ("暴怒", "暴怒"),
-    28: ("奥丁之怒", "奥丁之怒"),
-    29: ("怒击", "怒击"),
-    30: ("雷霆一击", "雷霆一击"),
-    31: ("雷霆轰击", "雷霆一击"),
-    32: ("复仇", "复仇"),
-    33: ("盾牌猛击", "盾牌猛击"),
-    34: ("斩杀", "斩杀"),
-    35: ("英勇打击", "猛击"),
-    36: ("浴血奋战", "嗜血"),
-    37: ("碎甲猛击", "怒击"),
-    38: ("破坏者", "破坏者"),
-    39: ("斩杀", "斩杀")
-}
+import time
 
-failed_spell_map = {
-    1: "胜利在望",
-    2: "勇士之矛",
-    3: "英勇飞跃",
-    4: "集结呐喊",
-    5: "震荡波",
-    6: "风暴之锤",
-    7: "破裂投掷",
-    8: "碎裂投掷",
-    9: "破胆怒吼",
-    10: "盾牌冲锋",
-}
+from utils import get_hotkey
 
-# 找到失败法术，必须是法术有冷却时间，并且冷却时间为 0
-def _get_failed_spell(state_dict):
-    法术失败 = state_dict.get("法术失败", 0)
-    spells = state_dict.get("spells") or {}
-    spell_name = failed_spell_map.get(法术失败)
-    if spell_name and spells.get(spell_name, -1) == 0:
-        return spell_name
-    return None
+# 战士能驱的类型：经典旧世战士只有「驱散魔法」（净化 1152 是牧师系，战士没有）。
+# 无限服战士没有驱散技能 —— 保留空元组，需要时再按实测填。
+DISPEL_TYPES = ()
+
+# 斩杀阈值（目标血量低于此值才放斩杀）
+EXECUTE_HP = 20
+
+# AOE 阈值（5 码内敌人数）
+AOE_3 = 3
+AOE_5 = 5
+
+# ============================================================
+# 内部小工具（本职业自用，不与其他职业共用）
+# ============================================================
+
+
+CD_UNAVAILABLE = 255
+
+# 驱散类型：1=魔法 2=诅咒 3=疾病 4=中毒
+DISPEL_MAGIC = 1
+DISPEL_CURSE = 2
+DISPEL_DISEASE = 3
+DISPEL_POISON = 4
+
+
+def _cd(spells, name):
+    """取冷却值；技能不存在或读不到返回 255（不可用）。"""
+    v = (spells or {}).get(name)
+    if v is None:
+        return CD_UNAVAILABLE
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return CD_UNAVAILABLE
+
+
+def _ready(spells, name):
+    """技能是否就绪（CD == 0）。"""
+    return _cd(spells, name) == 0
+
+
+def _int(state, key, default=0):
+    """取整型状态字段；字段缺失或不是数字时回默认值。"""
+    v = (state or {}).get(key, default)
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return default
+
+
+def _is_enemy(目标类型):
+    """敌对判定：1~10 是敌对区间（含可驱散减益的细分位）。"""
+    return 1 <= 目标类型 <= 10
+
+
+def _in_melee(距离, yards=10):
+    """距离码 → 码数比较。"""
+    try:
+        d = int(距离)
+    except (TypeError, ValueError):
+        return False
+    return 0 < d <= yards
+
+
+class Ctx(object):
+    """一次决策的读数打包（decision 开头 new 一个出来用）。"""
+
+    def __init__(self, state_dict, spec_name):
+        self.sd = state_dict or {}
+        self.spells = self.sd.get("spells") or {}
+        self.spec = spec_name or ""
+        self.group = self.sd.get("group") or {}
+
+        self.combat = _int(self.sd, "战斗")
+        self.hp = _int(self.sd, "生命值")
+        self.mp = _int(self.sd, "能量值")
+        self.valid = _int(self.sd, "有效性")
+
+        self.target_type = _int(self.sd, "目标类型")
+        self.target_hp = _int(self.sd, "目标生命值")
+        self.target_dist = _int(self.sd, "目标距离")
+        self.target_casting = _int(self.sd, "目标施法")
+
+        self.enemy_count = _int(self.sd, "敌人人数")
+        self.enemy5 = _int(self.sd, "5码敌人")
+        self.auto_attack = _int(self.sd, "自动攻击")
+
+        self.dispel_switch = _int(self.sd, "驱散开关")
+        self.delay = _int(self.sd, "延迟")
+
+    # -- 常用判断 ----------------------------------------------------
+    @property
+    def has_target(self):
+        """有活着的目标。"""
+        return self.target_type > 0
+
+    @property
+    def in_combat(self):
+        return bool(self.combat)
+
+    @property
+    def melee(self):
+        """目标在近战距离内。"""
+        return self.has_target and _in_melee(self.target_dist, 5)
+
+    def cd(self, name):
+        return _cd(self.spells, name)
+
+    def ready(self, name):
+        return _ready(self.spells, name)
+
+
+# -- 节流器 --------------------------------------------------------
+# 补 buff / 换武器这类维持类操作用，防止每 0.2 秒重复按
+_upkeep_state = {}
+
+
+def _upkeep_ok(key, interval=3.0):
+    """节流：同名操作在 interval 秒内只放行一次。
+
+    只用在「补 buff / 换武器 / 开爆发」这类维持性操作上，
+    **别用在主力技能上**（主力技能靠 CD 本身约束）。
+    """
+    now = time.time()
+    last = _upkeep_state.get(key)
+    if last is not None and (now - last) < interval:
+        return False
+    _upkeep_state[key] = now
+    return True
+
+
+def _reset_upkeep():
+    """测试用：清空节流状态。"""
+    _upkeep_state.clear()
+
+
+
+def _skill(ctx, name, unit=None):
+    """技能就绪就返回 hotkey，否则 None。"""
+    if not ctx.ready(name):
+        return None
+    return get_hotkey(unit if unit is not None else 0, name)
 
 
 def run_warrior_logic(state_dict, spec_name):
-    spells = state_dict.get("spells") or {}
+    """返回 (action_hotkey, current_step, unit_info)"""
+    ctx = Ctx(state_dict, spec_name)
+    spec = ctx.spec
 
-    战斗 = state_dict.get("战斗", False)
-    移动 = state_dict.get("移动", False)
-    施法 = state_dict.get("施法", 0)
-    引导 = state_dict.get("引导", 0)
-    蓄力 = state_dict.get("蓄力", 0)
-    蓄力层数 = state_dict.get("蓄力层数", 0)
-    生命值 = state_dict.get("生命值", 0)
-    能量值 = state_dict.get("能量值", 0)
-    一键辅助 = state_dict.get("一键辅助", 0)
-    法术失败 = state_dict.get("法术失败", 0)
-    目标类型 = state_dict.get("目标类型", 0)
-    队伍类型 = state_dict.get("队伍类型", 0)
-    队伍人数 = state_dict.get("队伍人数", 0)
-    首领战 = state_dict.get("首领战", 0)
-    难度 = state_dict.get("难度", 0)
-    英雄天赋 = state_dict.get("英雄天赋", 0)
-    敌人人数 = state_dict.get("敌人人数", 0)
-    目标生命值 = state_dict.get("目标生命值", 0)
-    失败法术 = _get_failed_spell(state_dict)
-    tup = action_map.get(一键辅助)
-    action_hotkey = None
-    current_step = "无匹配技能"
-    unit_info = {}
+    if not ctx.in_combat:
+        return None, "脱战", {}
 
-    if 法术失败 != 0 and 失败法术 is not None:
-        current_step = f"施放 {失败法术}"
-        action_hotkey = get_hotkey(0, 失败法术)
-    elif 一键辅助 == 12:
-        current_step = "施放 战斗怒吼"
-        action_hotkey = get_hotkey(0, "战斗怒吼")
-    elif spec_name == "武器": 
-        英勇打击高亮 = state_dict.get("英勇打击高亮", 0)
-        斩杀高亮 = state_dict.get("斩杀高亮", 0)
-        顺劈斩高亮 = state_dict.get("顺劈斩高亮", 0)
-        致死高亮 = state_dict.get("致死高亮", 0)
-        致死打击 = spells.get("致死打击", -1)
-        巨人打击 = spells.get("巨人打击", -1)
-        崩摧 = spells.get("崩摧", -1)
-        顺劈斩= spells.get("顺劈斩", -1)
-        斩杀 = spells.get("斩杀", -1)
-        压制 = spells.get("压制", -1)
-        压制充能 = spells.get("压制充能", -1)
-        if 英雄天赋 == 1:
-            if 战斗 and 1 <= 目标类型 <= 3:
-                if 生命值 < 70 and spells.get("胜利在望") == 0:
-                    current_step = "施放 胜利在望"
-                    action_hotkey = get_hotkey(0, "胜利在望")
-                elif 一键辅助 == 14:
-                    current_step = "施放 撕裂"
-                    action_hotkey = get_hotkey(0, "撕裂")
-                elif 巨人打击 == 0:
-                    current_step = "施放 巨人打击"
-                    action_hotkey = get_hotkey(0, "巨人打击")
-                elif 崩摧 == 0:
-                    current_step = "施放 崩摧"
-                    action_hotkey = get_hotkey(0, "崩摧")
-                elif 一键辅助 == 22:
-                    current_step = "施放 横扫攻击"
-                    action_hotkey = get_hotkey(0, "横扫攻击")
-                elif 敌人人数>=3 and 顺劈斩 == 0 and 能量值 >= 20:
-                    current_step = "施放 顺劈斩"
-                    action_hotkey = get_hotkey(0, "顺劈斩")
-                elif 敌人人数<=2 and 英勇打击高亮 > 0 and 能量值 >= 20:
-                    current_step = "施放 英勇打击"
-                    action_hotkey = get_hotkey(0, "猛击")
-                elif 敌人人数<=2 and 顺劈斩 == 0 and 顺劈斩高亮 > 0 and 能量值 >= 20:
-                    current_step = "施放 顺劈斩"
-                    action_hotkey = get_hotkey(0, "顺劈斩")
-                elif 致死打击 == 0 and 致死高亮 > 0 and 能量值 >= 15:
-                    current_step = "施放 致死打击"
-                    action_hotkey = get_hotkey(0, "致死打击")
-                elif 致死打击 == 0 and 能量值 >= 30:
-                    current_step = "施放 致死打击"
-                    action_hotkey = get_hotkey(0, "致死打击")
-                elif 压制 == 0:
-                    current_step = "施放 压制"
-                    action_hotkey = get_hotkey(0, "压制")
-                elif 斩杀高亮>0 and 斩杀 == 0:
-                    current_step = "施放 斩杀"
-                    action_hotkey = get_hotkey(0, "斩杀")
-                elif 能量值 >= 50:
-                    current_step = "施放 猛击"
-                    action_hotkey = get_hotkey(0, "猛击")
-            else:
-                current_step = "无匹配技能"     
-        elif 英雄天赋 == 2 and tup:
-            current_step = f"一键辅助-施放 {tup[0]}"
-            action_hotkey = get_hotkey(0, tup[1])
-        else:
-            current_step = "无匹配技能"            
-    elif spec_name == "狂怒":
-        if 战斗 and 1 <= 目标类型 <= 3:
-            if 生命值 < 70 and spells.get("胜利在望") == 0:
-                current_step = "施放 胜利在望"
-                action_hotkey = get_hotkey(0, "胜利在望")
-            elif tup:
-                current_step = f"一键辅助-施放 {tup[0]}"
-                action_hotkey = get_hotkey(0, tup[1])
-        else:
-            current_step = "无匹配技能"
-    elif spec_name == "防护":
-        盾牌格挡 = state_dict.get("盾牌格挡", 0)
+    # -- 通用：斩杀（目标残血）--
+    if ctx.has_target and ctx.target_hp > 0 and ctx.target_hp <= EXECUTE_HP:
+        hk = _skill(ctx, "斩杀")
+        if hk:
+            return hk, "斩杀", {"target_hp": ctx.target_hp}
 
-        if 战斗 and 1 <= 目标类型 <= 3:
-            if 盾牌格挡 == 0 and spells.get("盾牌格挡") == 0 and 能量值 >= 25:
-                current_step = "施放 盾牌格挡"
-                action_hotkey = get_hotkey(0, "盾牌格挡")
-            elif 生命值 < 70 and spells.get("胜利在望") == 0:
-                current_step = "施放 胜利在望"
-                action_hotkey = get_hotkey(0, "胜利在望")
-            elif 能量值 >= 60:
-                current_step = "施放 无视苦痛"
-                action_hotkey = get_hotkey(0, "无视苦痛")
-            elif tup:
-                current_step = f"一键辅助-施放 {tup[0]}"
-                action_hotkey = get_hotkey(0, tup[1])
-        else:
-            current_step = "无匹配技能"
+    # -- 防护专精：坦克工具优先 --
+    if spec == "防护":
+        hk = _skill(ctx, "盾牌猛击")
+        if hk:
+            return hk, "盾牌猛击", {}
+        if ctx.enemy5 >= 2:
+            hk = _skill(ctx, "盾击")
+            if hk:
+                return hk, "盾击", {}
+        hk = _skill(ctx, "盾牌格挡")
+        if hk:
+            return hk, "盾牌格挡", {}
+        hk = _skill(ctx, "致死打击")
+        if hk:
+            return hk, "致死打击", {}
+        hk = _skill(ctx, "挑战怒吼")
+        if hk:
+            return hk, "挑战怒吼", {}
 
-    return action_hotkey, current_step, unit_info
+    # -- 武器 / 狂怒：AOE 与爆发 --
+    if ctx.enemy5 >= AOE_5:
+        hk = _skill(ctx, "反击风暴")
+        if hk:
+            return hk, "反击风暴", {"enemies": ctx.enemy5}
+    if ctx.enemy5 >= AOE_3:
+        hk = _skill(ctx, "猛击")
+        if hk:
+            return hk, "猛击", {"enemies": ctx.enemy5}
+        hk = _skill(ctx, "破胆怒吼")
+        if hk:
+            return hk, "破胆怒吼", {"enemies": ctx.enemy5}
+        hk = _skill(ctx, "乘胜追击")
+        if hk:
+            return hk, "乘胜追击", {"enemies": ctx.enemy5}
+        hk = _skill(ctx, "顺劈斩")
+        if hk:
+            return hk, "顺劈斩", {"enemies": ctx.enemy5}
+        hk = _skill(ctx, "狂暴之怒")
+        if hk and _upkeep_ok("狂暴之怒", 5.0):
+            return hk, "狂暴之怒", {"enemies": ctx.enemy5}
+        if spec == "狂怒":
+            hk = _skill(ctx, "嗜血")
+            if hk and _upkeep_ok("嗜血", 5.0):
+                return hk, "嗜血", {"enemies": ctx.enemy5}
+
+    # -- 通用：控制与打断 --
+    if ctx.target_casting:
+        hk = _skill(ctx, "拦截")
+        if hk:
+            return hk, "拦截（打断）", {}
+        hk = _skill(ctx, "缴械")
+        if hk:
+            return hk, "缴械（打断）", {}
+        hk = _skill(ctx, "挑战怒吼")
+        if hk:
+            return hk, "挑战怒吼（打断）", {}
+
+    # -- 单体：撕裂 --
+    hk = _skill(ctx, "撕裂")
+    if hk:
+        return hk, "撕裂", {}
+
+    # -- 爆发 --
+    if ctx.enemy5 >= AOE_3:
+        hk = _skill(ctx, "鲁莽")
+        if hk and _upkeep_ok("鲁莽", 5.0):
+            return hk, "鲁莽", {}
+
+    # -- 平砍 --
+    hk = _skill(ctx, "英勇打击")
+    if hk:
+        return hk, "英勇打击", {}
+
+    # -- 兜底：起手（必须放最后，否则会挡死上面的分支）--
+    if ctx.auto_attack == 0 and _upkeep_ok("开始攻击", 2.0):
+        hk = _skill(ctx, "开始攻击")
+        if hk:
+            return hk, "开始攻击", {}
+
+    return None, "无操作", {}

@@ -4,8 +4,9 @@
 
 > **施工中（WIP）** — 功能仍在迭代，像素索引、配置结构和存档格式随时可能调整。
 >
-> 目前只有 **圣骑士（无限服 1.60.1）** 完成适配与验证；其余 12 个职业的
-> `class/*.lua` 与 `Arasaka/class/*_logic.py` 仍沿用正式服逻辑，在无限服上表现不可预期。
+> 当前为**无限服专用**版本：9 个职业全部有像素块布局与决策层。
+> **圣骑士**已完整验证；其余 8 个职业的决策逻辑是**初版**（能跑、优先级合理，
+> 但没经过实机校准），后续按需打磨。
 
 <!--
 AI_INSTRUCTION（AI 必读）：
@@ -14,7 +15,8 @@ AI_INSTRUCTION（AI 必读）：
 3. 核心原则：直接修改对应文件。Lua 端编辑 Cyber_Deck 目录下文件，Python 端编辑 Arasaka/ 下文件。
 4. 完成代码修改后，必须同步更新本文件中对应的章节。
 5. 像素块名称、状态字段、GUI 文本统一使用中文。
-6. 新增像素块索引从 210 起（1~208 已被占用：1~57 单体字段、58~207 队伍块、208 圣印剩余）。
+6. 新增像素块索引从 210 起（1~57 单体字段、58~207 队伍块、208~209 预留）。
+7. **职业专属内容写在 `Progress/<职业>.md`**，不要写进本文件。本文件只放通用架构与机制。
 -->
 <!-- AI: Before making any changes to this project, read this entire file first. After completing code changes, you MUST update the corresponding sections in this file. -->
 
@@ -32,16 +34,17 @@ AI_INSTRUCTION（AI 必读）：
 ### 特性
 
 - **不读写内存、不注入**：游戏状态压进屏幕顶部 255 个色块的 RGB 值，外部截图解码
-- **13 个职业**：每个职业独立的像素布局（`class/*.lua`）与决策逻辑（`Arasaka/class/*_logic.py`）
+- **无限服专用**：Lua 层只走无限服路径（Interface 16001），零售分支已移除
+- **9 个职业**：战士/圣骑/猎人/盗贼/牧师/萨满/法师/术士/德鲁伊，各有独立的像素布局与决策逻辑
 - **零侵入操作**：`PostMessage` 后台发键，不抢焦点，可以边挂机边打字
 - **热重载**：改完 Python 逻辑点一下 GUI「重载」即可，不用重启进程
-- **可观测**：`/cy gui` 看像素原始值、`/cy spec` 看专精/技能解析、`/cy auraprobe` 探测哪些光环字段被 secret 保护
+- **可观测**：`/cy gui` 看像素原始值、`/cy spec` 看专精/技能解析、`/cy auraprobe` 探测哪些光环字段被 secret 保护、`/cy dispelprobe` 看驱散点位
 
 ### 快速开始
 
 | 项 | 要求 |
 |---|---|
-| 游戏 | 魔兽世界**无限服** 1.60.1（Interface 16001）。正式服 12.x 的 Lua 层兼容，但职业逻辑需自行移植 |
+| 游戏 | 魔兽世界**无限服** 1.60.1（Interface 16001） |
 | 显示模式 | **窗口化 / 无边框窗口**（全屏独占截不到像素条） |
 | Python | 3.10+（仅源码方式需要） |
 | 依赖 | `customtkinter`（GUI）、`mss`（截图）、`pyyaml`（配置）；发键用内置 `ctypes`，无需 `pywin32` |
@@ -65,7 +68,7 @@ pip install customtkinter mss pyyaml
 
 ```
 Cyber_Deck/
-├── Cyber_Deck.toc          # 插件定义（v0.1.0-forever, 接口 16001 / 120000-120005）
+├── Cyber_Deck.toc          # 插件定义（v0.1.0-forever，接口 16001）
 ├── embeds.xml              # Ace3 库嵌入
 ├── LICENSE                 # MIT
 ├── README.md               # 完整技术文档（本文件）
@@ -80,30 +83,49 @@ Cyber_Deck/
 │   ├── core.lua            # 插件初始化、AceDB、事件注册、斜杠命令、开关切换
 │   ├── forever_data.lua    # 无限服离线技能表（{level, spellID}，ForeverDB 1.60.1）
 │   ├── forever.lua         # 无限服适配层（专精判定/技能名→rank/光环扫描/物品分组）
-│   ├── config.lua          # spellsList/events/heroTalents/difficulty/keymap 等配置
+│   ├── config.lua          # roleMap / events / keymap 等配置（零售专有表已清空）
 │   ├── block.lua           # 像素色条创建（255个色块 + 法术充能进度条）
 │   ├── macro.lua           # 动态宏创建（@raid/party 智能切换）
 │   ├── keybinds.lua        # 扫描动作条按键绑定
-│   ├── auras.lua           # 光环状态机（按classId索引）
+│   ├── auras.lua           # 光环状态机（当前仅圣骑士段；其它职业按经典 ID 补即可）
 │   ├── quickbutton.lua     # 四按钮可拖拽面板（爆发/AOE/输出模式/驱散）
 │   └── Spell_Misc_EmotionHappy.blp  # 插件图标
 │
-├── class/                  # 职业模块（13个职业的像素块布局 ClassBlocks）
-│   ├── Paladin.lua         # 圣骑士 — 含驱散开关/5码敌人/焦点施法宏
-│   └── ...                 # Warrior/Hunter/Rogue/Priest/DK/Shaman/Mage/
-│                           #   Warlock/Monk/Druid/DH/Evoker
+├── class/                  # 职业模块（像素块布局 ClassBlocks）
+│   ├── Paladin.lua         # 圣骑士 — 三系共用一套索引，含驱散开关/5码敌人/焦点施法宏
+│   ├── Warrior.lua         # 战士   ┐
+│   ├── Hunter.lua          # 猎人   │
+│   ├── Rogue.lua           # 盗贼   │
+│   ├── Priest.lua          # 牧师   ├ 9 个职业各一套布局：
+│   ├── Shaman.lua          # 萨满   │ 通用块 1~15 + 状态块 18~28
+│   ├── Mage.lua            # 法师   │ + 技能块 29 起 + 队伍块
+│   ├── Warlock.lua         # 术士   │
+│   └── Druid.lua           # 德鲁伊  ┘
 │
 ├── main.lua                # 事件处理函数 + OnUpdate 帧循环
 ├── gui.lua                 # Ace3 配置界面（/cy gui 像素块调试）
 │
+├── Progress/               # 各职业的专属实现文档
+│   └── paladin.md          # 圣骑士：像素索引/驱散能力表/专精判定/圣印机制/决策优先级
+│
 ├── Arasaka/                # Python 决策层
-│   ├── config.yml          # 像素块配置（按职业ID分段）
-│   ├── utils.py            # 核心工具库（配置加载、按键发送、单位查询）
+│   ├── config.yml          # 像素块配置（按职业ID分段：1战士 2圣骑 3猎人 4盗贼 5牧师
+│   │                       #   7萨满 8法师 9术士 11德鲁伊）
+│   ├── utils.py            # 核心工具库（配置加载、按键发送、单位选择器）
 │   ├── GetPixels.py        # 屏幕像素扫描引擎（mss 截图 + RGB 解码）
-│   ├── class/              # 职业逻辑模块（14个.py，13职业 + __init__）
-│   │   ├── paladin_logic.py   # 圣骑士（含驱散开关+Holy进攻+5码判断）
-│   │   └── ...             # 其余12个职业
-│   ├── keymap/             # 按键映射（14个.yml：1个默认 keymap.yml + 13个职业专用）
+│   ├── class/              # 职业逻辑模块（9 个职业各一个）
+│   │   ├── __init__.py
+│   │   ├── paladin_logic.py   # 圣骑士（神圣/防护/惩戒三系，已完整验证）
+│   │   ├── warrior_logic.py   # 战士（武器/狂怒/防护，初版）
+│   │   ├── hunter_logic.py    # 猎人（野兽控制/射击/生存，初版）
+│   │   ├── rogue_logic.py     # 盗贼（狂徒/敏锐/刺杀，初版）
+│   │   ├── priest_logic.py    # 牧师（戒律/圣言/暗影，初版）
+│   │   ├── shaman_logic.py    # 萨满（元素/增强/恢复，初版）
+│   │   ├── mage_logic.py      # 法师（奥术/火焰/冰霜，初版）
+│   │   ├── warlock_logic.py   # 术士（恶魔学识/毁灭/痛苦，初版）
+│   │   └── druid_logic.py     # 德鲁伊（平衡/野性/守护，初版）
+│   ├── keymap/             # 按键映射（keymap.yml 默认表 + 9 个职业各自的 yml）
+│   │                       #   由 other/gen_class_keymap.py 从 class/*.lua 的宏表生成
 │   └── other/              # 调试工具 + icon.ico + 数据生成脚本
 │
 └── pack/                   # 打包工具（可选，Cython + PyInstaller + UPX → exe）
@@ -133,7 +155,7 @@ Cyber_Deck/
 3. `core/forever_data.lua`（离线技能表）→ `core/forever.lua`（无限服适配层）
 4. `core/quickbutton.lua` → `core/config.lua` → `core/block.lua` → `core/macro.lua`
    → `core/keybinds.lua` → `core/auras.lua`
-5. 13 个 `class/*.lua`（Warrior → Paladin → … → Evoker）
+5. `class/*.lua`（当前只有 `Paladin.lua`）
 6. `main.lua` → `gui.lua`
 
 顺序不能随意调，依赖关系是单向的：
@@ -200,10 +222,8 @@ char = { level, aoeMode, cooldowns, dpsMode, delay, potion,
          quickButtonCX, quickButtonCY, quickButtonShow, dispel }
 ```
 
-> **改名说明**：v0.1.0 之前叫 `FuyutsuiADB`。`Cyber_Deck.toc` 目前仍声明旧名，
-> `core/core.lua:OnInitialize` 里会把旧数据整体搬到 `CyberDeckADB` 再清空旧表 ——
-> 老玩家升级不会丢开关状态/窗口位置。
-> 等确认用户都升过级，把 toc 里的 `FuyutsuiADB` 和那段迁移代码一起删掉即可。
+> 存档变量名：`CyberDeckADB`（`Cyber_Deck.toc` 的 `## SavedVariables`）。
+> 旧名 `FuyutsuiADB` 与对应的迁移逻辑已移除 —— 插件已改名 Cyber Deck。
 
 ### 关键函数表
 
@@ -213,18 +233,21 @@ char = { level, aoeMode, cooldowns, dpsMode, delay, potion,
 | `F:OnEnable()` | core.lua | 获取专精、加载 blocks、注册事件 |
 | `F:SwitchCooldown()` | core.lua | 打印爆发状态+写入像素（切换逻辑在 SlashCommand） |
 | `F:SwitchAoeMode()` | core.lua | 打印 AOE 模式+写入像素（切换逻辑在 SlashCommand） |
-| `F:SwitchDpsMode()` | core.lua | 打印输出模式+写入像素（切换逻辑在 SlashCommand） |
 | `F:SwitchDispel()` | core.lua | 切换驱散开关（含切换逻辑+打印+像素写入） |
 | `F:OnUpdate(elapsed)` | main.lua | 帧循环（高频+低频轮询） |
 | `F:updatePlayerConfig()` | main.lua | 初始化驱散开关等像素 |
-| `F:updateEnemyCount()` | main.lua | 敌人计数（含5码姓名版） |
+| `F:updateEnemyCount()` | main.lua | 敌人计数（含 5 码姓名版、有光环敌人数） |
+| `F:updateSpellKnown()` | main.lua | 生成防御/进攻驱散曲线点位（按已学会法术动态算） |
+| `F:updateShapeshiftForm()` | main.lua | 形态（德鲁伊「姿态」块） |
+| `F:updateTargetAuraCount()` | main.lua | 目标光环数量（牧师「目标光环数量」块） |
+| `F:updateUnitAuraCount(unit)` | main.lua | 单位负面光环计数（通用，被上一条和敌人计数调用） |
 | `CreatTexture(index, value)` | core/block.lua | 写入像素块（参数为索引号+数值） |
 | `creatColorCurveScaling(b)` | main.lua | 非线性颜色曲线编码 |
 | `InitQuickToggleButton()` | quickbutton.lua | 四按钮面板 |
 | `updateAura()` | auras.lua | 光环倒计时 |
 | `updateAuraBlocks()` | auras.lua | 光环像素更新 |
 
-**斜杠命令**：`/cy help / cd / aoemode / potion / dispel / delay / gui / spec / auraprobe / options / dpsmode / message`（完整表见「十四、调试技巧」）
+**斜杠命令**：`/cy help / cd / aoemode / potion / dispel / delay / gui / spec / auraprobe / dispelprobe / options / message`（完整表见「十四、调试技巧」）
 
 完整命令列表：
 
@@ -232,14 +255,19 @@ char = { level, aoeMode, cooldowns, dpsMode, delay, potion,
 |------|------|
 | `/cy cd` / `cd on` / `cd off` | 切换/开启/关闭爆发 |
 | `/cy aoemode` / `auto` / `aoe` | 切换/自动/单体 AOE 模式 |
-| `/cy dpsmode` / `manual` / `assistant` | 切换/手写逻辑/一键辅助 |
 | `/cy potion` / `on` / `off` | 切换/开启/关闭爆发药水 |
 | `/cy delay [秒]` | 临时延迟逻辑（默认 1 秒） |
 | `/cy dispel` / `on` / `off` | 切换/开启/关闭驱散 |
 | `/cy gui` | 打开像素块调试界面 |
+| `/cy spec` | 打印专精判定过程、招牌技能探测、离线技能表 |
+| `/cy auraprobe` / `ap` | 探测哪些光环字段被 secret 保护 |
+| `/cy dispelprobe` | 打印 4 种驱散类型的命中法术、曲线点位、各单位可驱散减益条数 |
 | `/cy options` / `config` | 打开 Ace3 选项界面 |
 | `/cy message <文本>` | 聊天框测试 |
 | `/cy help` | 打印帮助信息 |
+
+> ⚠️ 无限服**没有**「一键辅助」，`/cy dpsmode` 与「输出模式」像素已移除。
+> GUI 里的「输出模式」按钮名保留是为了不破坏已保存的 AceDB 变量名，无限服上该模式没有对应块。
 
 ---
 
@@ -257,7 +285,7 @@ char = { level, aoeMode, cooldowns, dpsMode, delay, potion,
 
 **线程模型**：按键检测 50ms / 逻辑执行 200ms / GUI 刷新 100ms
 
-### utils.py（20 个选择器，写决策前先翻这里）
+### utils.py（25 个函数，写决策前先翻这里）
 
 **配置与按键**
 
@@ -302,49 +330,104 @@ def run_xxx_logic(state_dict: dict, spec_name: str) -> tuple:
     """返回 (action_hotkey, current_step, unit_info)，无操作时 action_hotkey = None"""
 ```
 
+### 决策层内部小工具（**各职业自带一份**）
+
+**9 个职业互不共用决策层工具** —— 每个 `Arasaka/class/<职业>_logic.py`
+在文件顶部自带一套小工具，改一个职业不会影响其它职业。
+
+> 没有 `battle_common.py` 这类公共模块。**要加能力就加在职业自己的文件里。**
+
+每个职业的工具段大致是这样（按该职业实际用到的裁剪，不用的不带）：
+
+```python
+class Ctx(object):
+    """一次决策的读数打包"""
+    def __init__(self, state_dict, spec_name):
+        self.spells = (state_dict or {}).get("spells") or {}
+        self.spec = spec_name or ""
+        self.hp = _int(self.sd, "生命值")
+        self.melee = ...          # 目标在近战距离内
+    def cd(self, name): ...      # 取冷却值
+    def ready(self, name): ...   # CD == 0 的布尔简写
+```
+
+| 小工具 | 作用 |
+|--------|------|
+| `_cd(spells, name)` | 取冷却值，缺失 → `255`（不可用） |
+| `_ready(spells, name)` | `CD == 0` 的布尔简写 |
+| `_int(state, key, default=0)` | 安全取整数（缺失/非数字 → default） |
+| `_is_enemy(目标类型)` | 敌对判定（**区间** `1~10`，不要写 `== 1`） |
+| `_in_melee(距离, yards=10)` | 距离在近战范围内 |
+| `_upkeep_ok(key, interval=3.0)` | 节流器：维持类操作（补 buff/换武器）防重复按 |
+| `_reset_upkeep()` | 清空节流状态（换专精/重载时调） |
+| `_pick_dispel_unit(state_dict, 驱散开关, types)` | 从队友里挑要驱散的目标，返回 `(槽位, 单位数据)` |
+
+各职业实际带了哪几个，看对应 `Progress/<职业>.md` 的「内部小工具」表。
+
+**冷却值约定**：`0` = 就绪，`1~254` = 冷却中（秒），`255` = 不可用。
+**节流约定**：只用在「补 buff / 换印 / 换武器」这类维持类操作上，
+**别用在主力技能上**（否则会错过该打的技能）。
+
 ---
 
 ## 八、状态数据结构
 
 ```python
 state_dict = {
-    "职业": int,          # 1-13
-    "专精": str,          # 专精名称
-    "生命值": float,      # 玩家血量%
-    "能量值": float,      # 玩家能量%
+    # ── 全局 state 段 ──
+    # config.yml 顶层 state，所有职业共用同一批字段。
+    # 字段名 → step 号的对照见 config.yml 本身；这里是它读出来的样子。
+    "有效性": bool,       # 玩家可操作（没死/没上马/不在聊天/没吃药）
     "战斗": bool,
     "移动": bool,
     "施法": int,          # 施法中
     "引导": int,          # 引导中
-    "蓄力": int,          # 蓄力中
-    "蓄力层数": int,      # 蓄力层数
-    "目标类型": int,      # 0=无/超距/死亡, 1~10=敌对, 11~20=友善（见编码表）
+    "生命值": int,        # 玩家血量%
+    "能量值": int,        # 玩家资源%（经典职业是法力）
+    "法术失败": int,      # 被抵抗/打断的技能块索引，0=无
+    "目标类型": int,      # 0=无/超距/死亡, 1~10=敌对, 11~20=友善
+    "队伍类型": int,      # 0=单人, 1-40=团本
+    "队伍人数": int,
+
+    # ── 职业段 ──
+    # config.yml 的 <职业ID>/<专精ID>。字段分两类：
+    #   通用：所有职业都有的（下面列的是当前这批，各职业新增时沿用同名）
+    #   专属：只有该职业有的（见 Progress/<职业>.md）
+    "目标生命值": int,    # 目标血量%
+    "施法技能": int,      # 正在施放的技能块索引
+    "施法目标": int,
     "目标距离": int,      # 码
-    "目标生命值": float,
-    "爆发开关": int,      # 0/1
-    "AOE开关": int,       # 0=自动, 1=单体
-    "输出模式": int,      # 0=一键辅助, 1=手写逻辑
+    "自动攻击": int,      # 1=平砍中
     "敌人人数": int,
-    "5码敌人": int,       # Cyber Deck 扩展
-    "队伍类型": int,      # 0=单人, 1-40=团本, 46=大秘
-    "首领战": int,        # Boss ID
-    "难度": int,
-    "英雄天赋": int,
-    "法术失败": int,
-    "驱散开关": int,      # Cyber Deck 扩展
-    "spells": { "法术名": 冷却值 },  # 0=就绪
+    "爆发开关": int,      # 0/1
+    "大红冷却": int,
+    "延迟": int,
+    "驱散开关": int,
+    "5码敌人": int,
+    "目标施法": int,
+    # …职业专属字段若干，名字与 step 由该职业自己定
+
+    # ── 其它 ──
+    "职业": int,          # 职业 ID
+    "专精": str,          # 专精名称
+    "spells": { "法术名": 冷却值 },  # 0=就绪；键名 = 技能中文名
     "group": {
-        "1": {
-            "生命值": float,     # 血量%
-            "职责": int,         # 坦克/治疗/输出
-            "驱散": int,         # 需要驱散的类型
-            # 职业特定字段如 "永恒之火", "救世道标" 等
+        "1": {                       # 键是队友序号 "1"~"30"
+            "生命值": int,           # 血量%
+            "职责": int,             # 1=坦克 2=治疗 3=输出 0=不计
+            "驱散": int,             # 需要驱散的类型（1 魔法 2 诅咒 3 疾病 4 中毒）
+            # …该职业的队友追踪字段（光环秒数之类），由 group 段配置决定
         },
         ...
     },
-    "auras": { "光环名": int },  # 光环状态（如 "神圣意志", "圣光灌注"）
+    "auras": { "光环名": int },  # 光环状态
 }
 ```
+
+> **怎么知道某个字段属于哪一类**：全局 state 段在 `config.yml` 顶层，是所有职业共用的；
+> 职业段在 `<职业ID>/<专精ID>` 下，各职业可以自由定义。
+> **新增字段时三处同步**：Lua 块定义（`class/<职业>.lua`）→ `config.yml` 字段 → Python 读取。
+> 用 `.workbuddy/check_integrity.py` 查断链。
 
 ### 关键约定
 
@@ -353,7 +436,8 @@ state_dict = {
 | 冷却值 | 0=就绪, 1~254=冷却中(秒), 255=不可用 |
 | 目标类型 | 0=无/超距/死亡, 1~10=敌对, 11~20=友善（1/11 为基线，其余为可驱散细分） |
 | 队伍类型 | 0=单人, 1-40=团本, 46=大秘 |
-| 职业ID | 1=战士 2=圣骑 3=猎人 4=盗贼 5=牧师 6=DK 7=萨满 8=法师 9=术士 10=武僧 11=德 12=DH 13=唤魔师 |
+| 职业ID | 1=战士 2=圣骑 3=猎人 4=盗贼 5=牧师 6=DK 7=萨满 8=法师 9=术士 10=武僧 11=德 12=DH 13=唤魔师（无限服只有 1~5、7~9、11 存在） |
+| 驱散类型 | 1=魔法 2=诅咒 3=疾病 4=中毒；**各职业能驱的类型不同**，看 `Progress/<职业>.md` |
 
 ---
 
@@ -375,49 +459,19 @@ state_dict = {
 
 | 文件 | 内容 |
 |------|------|
-| `Arasaka/config.yml` | 圣骑士三系（spec 1/2/3）各一段：全局 state + 专精字段 + spells CD + `group(start:76, num:3)` + `buff_fields` |
-| `Arasaka/class/paladin_logic.py` | 三系决策：神圣（治疗/驱散/圣印）、防护（盾/圣印/审判/奉献）、惩戒（斩杀/圣印/驱散） |
+| `Arasaka/config.yml` | 圣骑士三系（spec 1/2/3）各一段：全局 state + 专精字段 + spells CD + `group(start:57, num:5)`（生命值/职责/驱散/圣光守望/圣光誓约） |
+| `Arasaka/class/paladin_logic.py` | 三系决策：神圣（治疗/驱散/圣印）、防护（盾/圣印/审判/奉献）、惩戒（斩杀/圣印/驱散）。**优先级表见 `Progress/paladin.md`** |
 | `Arasaka/keymap/paladin.yml` | 圣印与技能的热键映射（由 `other/gen_paladin_keymap.py` 生成） |
 
 ---
 
 ## 十、圣骑士定制详解
 
-### 驱散开关（Lua + Python 双层）
+圣骑士是当前唯一完成适配的职业。它的**专属实现细节**（像素索引表、驱散能力表、
+专精判定三层、圣印机制、三系决策优先级、按键映射、离线技能表）已移出到
+**[`Progress/paladin.md`](Progress/paladin.md)** —— 新增职业时照着那份文件抄结构。
 
-- **Lua**：`SwitchDispel()` 切换 0/1，写入像素块 + SavedVariables
-- **Python**：关闭时临时移除 group 中驱散字段 → 原始逻辑跳过队友驱散 → 恢复字段
-- 目标驱散不受影响（依赖 `目标类型`，不依赖 group）
-
-### 三专精共用一套索引
-
-无限服圣骑士只有一个伪专精（1486），三系共用 `class/Paladin.lua` 的同一套像素布局，
-完整索引表见「十六、无限服适配」。要点：
-
-| 索引段 | 内容 |
-|--------|------|
-| `1~8` | 锚点 / 职业 / 专精 / 有效性 / 战斗 / 移动 / 施法 / 引导 |
-| `9~26` | 生命值、能量值、**（11 号空）**、法术失败、目标类型、队伍类型、队伍人数、首领战、难度、圣印、施法技能/目标、目标距离、自动攻击、神恩术、圣光灌注、敌人人数、爆发开关 |
-| `27~56` | 技能 CD（制裁之锤 / 圣盾术 / 圣佑术 / 圣疗术 / 神圣震击 / 审判 / 奉献 / 驱邪术 / 愤怒之锤 / 神圣打击 / 神圣愤怒 / 清洁术 / 正义之怒 / 目标施法 / 神圣之盾 / 神恩术 / 七种圣印探测） |
-| `57` | 队伍块 `start` |
-| `58~207` | 队伍块（每人 5 格：生命值 / 职责 / 驱散 / 圣光守望 / 圣光誓约） |
-| `208` | 圣印剩余秒（auras 计时） |
-
-> 编号已压缩为连续值，无空洞。`group.start = 57` 是**起始偏移**，队友 1 的
-> 生命值落在 `57+1=58`，队友 30 的第 5 个 buff 位落在 `57 + 29*5 + 5 = 207`。
->
-> **注意**：`197 生物类型` 已删除（正式服也没有，靠游戏自己拒绝非法目标）；
-> 圣光术/圣光闪现不再采集 CD（无冷却）。
-
-> 已删除的正式服索引（`200~211`）：复仇之怒、圣洁护盾、正义盾击、神圣风暴、责难、神圣牺牲、
-> 殉道圣印/审判、洛丹伦号角、激励典范、神圣之光、真理之音 —— 无限服 60 级技能组不提供。
-
-### 圣印机制
-
-- 7 种圣印共用一个 `Auras["圣印"]` 条目，不列 `addAuras`（7 个 rank 段约 30 个 spellID，列全不划算）
-- 施放成功由 `forever.lua:MarkForeverAuraCast` 解析出圣印编号，写入 `sealValue` + `expirationTime = now + 30`
-- 18 号像素给决策层「当前挂的是哪个」，208 号给「还剩几秒」
-- 防护选择：`<50%` 立即换智慧；`≥50%` 且智慧未到期则保持；到期或挂错才换愤怒
+通用部分（驱散开关、四按钮面板、像素编码、事件机制）见下：
 
 ### 四按钮面板
 
@@ -425,8 +479,8 @@ state_dict = {
 |------|------|
 | 爆发 | 切换爆发开关 |
 | 自动/单体 | 切换 AOE 模式 |
-| 逻辑/辅助 | 切换输出模式 |
-| 驱散 | 切换驱散开关 |
+| 逻辑/辅助 | 切换输出模式（⚠️ 无限服无「一键辅助」，该模式没有对应块，是遗留 UI） |
+| 驱散 | 切换驱散开关（同时改 Lua 像素和 Python 行为） |
 
 ---
 
@@ -444,17 +498,88 @@ Python 通过 `PostMessage(WM_KEYDOWN/WM_KEYUP)` 向 WoW 窗口发送按键：
 
 ## 十二、添加新职业逻辑
 
+> 无限服只有 9 个职业：战士 2=圣骑 3=猎人 4=盗贼 5=牧师 7=萨满 8=法师 9=术士 11=德鲁伊
+> （6=DK、10=武僧、12=DH、13=唤魔师 在这个服务器上**不存在**）。
+>
+> **当前进度**：9 个职业全部有 `class/*.lua`（像素布局）+ `Arasaka/class/*_logic.py`
+> （决策层）+ `Arasaka/keymap/*.yml`（热键）+ `Progress/<职业>.md`（职业文档）。
+> 圣骑士是**完整验证过**的；其余 8 个是**初版**（能跑、优先级合理，未实机校准）。
+>
+> **决策层各写各的**：9 个职业的 `_logic.py` **互不共用工具代码**，
+> 每个文件在顶部自带一套内部小工具（读数打包 / 冷却读取 / 区间判断 / 节流 / 驱散选人）。
+> 改一个职业不会波及其它职业，代价是每个文件多几十行。
+>
+> 写新职业时照 `Progress/<职业>.md` 的「内部小工具」表抄一份即可。
+>
+> ⚠️ **无限服 vs 正式服的关键差异**（照抄正式服代码必然失效）：
+> - 法术 ID 是**经典 ID**（4987 清洁术、1152 纯净术），不是正式服 ID
+> - 60 级经典技能组，没有 11.x/12.x 的专精机制（beacon、圣光守望、充能系统…）
+> - 玩家资源是**法力**（不是 11.x 的神圣能量）
+> - `spellsList` 已删除；技能索引改由 `core/forever.lua` 的 `ResolveSpellID(name)` 按**技能名**解析
+
 ### Lua 端
 
-1. 创建/编辑 `class/NewClass.lua`，定义 `CyberDeck.ClassBlocks[classId]`
-2. 在 `core/config.lua` 的 `spellsList` 中添加法术映射
-3. 在 `Cyber_Deck.toc` 中注册文件
+1. **建 `class/NewClass.lua`** — 定义 `CyberDeck.ClassBlocks[classId]`
+   - 块写法：`[索引] = { type = "block", name = "中文名" }`
+   - 技能写法：`[索引] = { type = "spell", name = "技能中文名" }`（**用 name 不用 spellId**）
+   - 光环写法：`[索引] = { type = "aura", name = "光环名", auraName = "光环名", showKey = "remaining" }`
+   - 在 `Cyber_Deck.toc` 的 `class/` 段落注册新文件
+2. **建/补 `core/auras.lua` 的该职业段** — 光环状态机条目
+   - ⚠️ 必须用**经典 spellID**，正式服 ID 一律无效
+   - 复杂光环（如圣印）参考圣骑士的「`MarkForeverAuraCast` + 不列 addAuras」做法
+3. **补 `core/forever_data.lua`** — 该职业的离线训练师技能表（`{level, spellID}` 二元组）
+   - 生成脚本：`Arasaka/other/gen_forever_spells.py`
+   - 数据源：ForeverDB 1.60.1（来源署名勿删，见文件头）
+4. **检查 `main.lua` 的通用块覆盖** — 若该职业需要通用块（如牧师的「目标光环数量」、
+   德鲁伊的「姿态」），确认 `updateTargetAuraCount` / `updateShapeshiftForm` 的写入分支已覆盖
+   （这两个函数是**跨职业通用件**，删了会缺数据）
 
 ### Python 端
 
-1. 创建 `Arasaka/class/newclass_logic.py`，实现 `run_newclass_logic(state_dict, spec_name)`
-2. 在 `Arasaka/config.yml` 中添加 `keymap: "newclass.yml"`
-3. 创建 `Arasaka/keymap/newclass.yml`
+1. **建 `Arasaka/class/newclass_logic.py`** — 实现 `run_newclass_logic(state_dict, spec_name)`
+   - 返回 `(action_hotkey, current_step, unit_info)`，`action_hotkey = None` 表示无操作
+   - `spec_name` 是中文专精名（"神圣"/"防护"/"惩戒"/…）
+   - **文件顶部自带一套内部小工具**（`Ctx` / `_cd` / `_ready` / `_int` /
+     `_is_enemy` / `_in_melee` / `_upkeep_ok` / `_pick_dispel_unit`）
+     —— 照 `Progress/<职业>.md` 的「内部小工具」表抄，**各职业互不共用**
+   - 单位选择器从 `Arasaka/utils.py` 直接 import（**25 个函数都在，别重复实现**）：
+     `get_lowest_health_unit` / `get_lowest_health_unit_with_aura` /
+     `get_lowest_health_unit_without_aura` / `get_lowest_health_unit_with_aura_count` /
+     `get_unit_with_role` / `get_unit_with_aura` / `count_units_with_aura` /
+     `count_units_without_aura_below_health` / `get_count_units_below_health` /
+     `get_unit_with_dispel_type` …
+2. **在 `Arasaka/config.yml` 添加职业段** — 顶层键是职业 ID（`2` = 圣骑士），下面按专精 ID 分段
+   - 每段写：`{step, type}` 字段 + `spells: {技能名: {step, type}}` + `group: {start, num, ...}`
+3. **建 `Arasaka/keymap/newclass.yml`** — 热键映射
+   - 格式：`序号: {unit: 单位序号, 技能: "技能名", 热键: "按键串"}`
+   - 生成脚本：`Arasaka/other/gen_class_keymap.py`（**已泛化**，不带参数则全量生成 9 个职业）
+   - 它从 `class/*.lua` 的 `MacrosList` 反推热键表 —— 改完宏表要重跑：
+     `python Arasaka/other/gen_class_keymap.py`
+4. **在 `Arasaka/keymap/keymap.yml` 注册**新职业的 keymap 文件名
+
+### 验证清单
+
+```
+✓ luac -p <所有 lua 文件>                       # 语法
+✓ py_compile <所有 py 文件>                    # 语法
+✓ yaml.safe_load(config.yml)                   # 配置
+✓ check_class_integration.py  四方一致（class↔config↔keymap↔logic）
+✓ check_integrity.py          五维交叉校验（像素↔config↔Python↔事件↔宏）
+✓ check_readme.py             文档与代码一致
+✓ /cy spec  看专精判定、技能书解析、法术 ID    # 游戏内
+✓ /cy gui    看像素原始值是否与索引表一致      # 游戏内
+```
+
+**静态交叉校验脚本**：
+
+| 脚本 | 检查什么 |
+|------|---------|
+| `check_class_integration.py` | **四方一致**：`class/*.lua` ↔ `config.yml` ↔ `keymap/*.yml` ↔ `*_logic.py`（9 职业逐个查） |
+| `check_integrity.py` | 五维交叉校验（**多职业版**）：像素↔config 字段按 step 对齐、Python 读的字段↔config 声明、注册事件↔处理函数、宏↔keymap 热键 |
+| `check_readme.py` | 文档与代码一致（数字声明、职业文档存在性、零售件残留检查） |
+| `audit_redundancy.py` | 单文件未使用 import/函数/常量/变量 + 注释密度 |
+| `audit_crossfile.py` | 跨文件确认（单文件分析会把「被 import 的函数」误报成死代码） |
+| `audit_wrong_deletion.py` | 误删审计：把 git HEAD 的删除逐条对照「无限服 9 职业是否存在」判定 |
 
 ---
 
@@ -464,21 +589,33 @@ Python 通过 `PostMessage(WM_KEYDOWN/WM_KEYUP)` 向 WoW 窗口发送按键：
 
 1. **直接修改**：所有功能直接编辑对应文件
 2. **中文命名**：像素块、状态字段、GUI 文本
-3. **像素索引**：新增从 210 起（1~208 已占用）
+3. **像素索引**：新增从 210 起。1~15 是全局 state、57 是队伍块起点、58~207 是队伍块
+   （`start=57`、`num=5` 时），**208 之后才安全** —— 新块编号先算队伍块区间，别撞进去
 4. **SavedVariables**：新增字段在 `core/core.lua` 的 `defaults.char` 注册
+
+### Lua 端规则
+
+- 技能块用 `name`（技能中文名）**不要用 `spellId`** —— 无限服同技能多 rank，由
+  `core/forever.lua:ResolveSpellID(name)` 解析到已学会的 rank
+- 光环 ID 必须是**经典 ID**；`core/auras.lua` 里正式服 ID 的一律无效
+- 注释用**单排**形式（注释在条件上一行），不用尾注释
+- 中文变量名 + 中文注释
 
 ### Python 端规则
 
 - 职业逻辑返回 `(action_hotkey, current_step, unit_info)` 三元组
-- 优先使用 `utils.py` 工具函数
+- 优先使用 `utils.py` 工具函数（**25 个都在**，别重复实现，也别删）
 - 修改后点击 GUI"重载"生效
 
 ### 常见陷阱
 
 - **elif 链无法回退**：跳过某优先级需在调用前修改 `state_dict`
+- **兜底分支必须放最后**：放最前面会让后面全部 elif 被挡死
 - **线程安全**：访问 `_state_dict` 注意 `_state_lock`
 - **TOC 顺序**：`core/*.lua` → `class/*.lua` → `main.lua` → `gui.lua`
 - **模块缓存**：热重载需 `importlib.reload()`
+- **删代码用行号定位**：不要用 `.*?` 匹配缩进 `end`（会吞掉函数边界）
+- **通用工具函数不要按「当前是否被调用」判断死活**：见 17.5 的四类判定标准
 
 ---
 
@@ -486,7 +623,8 @@ Python 通过 `PostMessage(WM_KEYDOWN/WM_KEYUP)` 向 WoW 窗口发送按键：
 
 ### 全部斜杠命令（`/cy` / `/cyberdeck`）
 
-> `/fu` 仍然注册着，等价于 `/cy`（老习惯/旧宏可直接用）。想彻底停用把 `core/core.lua:23` 那行删掉即可。
+> 命令别名：`/cy` 和 `/CyberDeck`（大小写不敏感）。
+> 旧版的 `/fu` 已移除 —— 插件已改名 Cyber Deck，不再兼容老命令。
 
 | 命令 | 作用 |
 |------|------|
@@ -497,11 +635,14 @@ Python 通过 `PostMessage(WM_KEYDOWN/WM_KEYUP)` 向 WoW 窗口发送按键：
 | `/cy dispel` / `on` / `off` | 驱散开关（同时改 Lua 像素和 Python 行为） |
 | `/cy delay [秒]` | 临时暂停决策 N 秒（默认 1 秒，用于手动插技能） |
 | `/cy gui` | 像素块调试界面 |
-| `/cy spec` | 专精判定 / 技能解析 / 圣印计时 |
-| `/cy auraprobe`（`/cy ap`） | 光环字段可读性探测，见下方 |
+| `/cy spec` | 专精判定 / 技能解析 / 招牌技能探测三态 / 各技能 CD |
+| `/cy auraprobe`（`/cy ap`） | 光环字段可读性探测（逐字段试读），见下方 |
+| `/cy secrets`（`/cy sec`） | secret 上下文探测（问客户端 `C_Secrets` 谓词），见下方 |
+| `/cy dispelprobe`（`/cy dp`） | 驱散能力探测：4 种类型的命中法术 / 曲线点位 / 各单位可驱散减益条数 |
 | `/cy options` / `/cy config` | Ace3 选项面板 |
-| `/cy dpsmode` / `manual` / `assistant` | 输出模式切换 ⚠️ **无限服无「一键辅助」，决策层也不读这个值，属于遗留功能** |
 | `/cy enable` / `/cy disable` | Ace3 启用/停用插件本体 |
+| `/cy macro` | 打印当前宏列表 |
+| `/cy dpsmode` / `manual` / `assistant` | 输出模式切换 ⚠️ **无限服无「一键辅助」，对应像素已删除，命令保留只是不生效** |
 | `/cy message 文本` | 聊天框测试输入 |
 
 ### 其它调试手段
@@ -513,6 +654,40 @@ Python 通过 `PostMessage(WM_KEYDOWN/WM_KEYUP)` 向 WoW 窗口发送按键：
 - GUI「重载」按钮 — 热重载 Python 模块
 
 ### secret 探测（写治疗职业前先跑一次）
+
+> ⚠️ **无限服 1.60.1 带零售同款的 Secret Values 机制**（不是只有零售才有）。
+> 客户端自带 `C_Secrets` API，Decursive / EllesmereUI / SpellActivationOverlay 都在用。
+
+#### `/cy secrets` —— 问客户端「现在什么会变 secret」（推荐先跑这个）
+
+`C_Secrets` 的谓词能**直接问**当前上下文里某一类数据会不会变成 secret 值，
+比逐字段试读准得多 —— 试读只能告诉你「这一次读到了什么」，
+谓词能告诉你「什么时候会变」。
+
+| 谓词 | 管的什么 |
+|------|---------|
+| `ShouldAurasBeSecret()` | 光环数据（名字/层数/剩余时间） |
+| `ShouldCooldownsBeSecret()` | 冷却 |
+| `ShouldUnitIdentityBeSecret(unit)` | 单位名字/身份 |
+| `ShouldUnitStatsBeSecret()` | 单位属性 |
+| `ShouldUnitThreatValuesBeSecret(unit, target)` | 威胁值 |
+| `ShouldUnitSpellCastingBeSecret(unit)` | 施法信息 |
+| `ShouldUnitHealthMaxBeSecret(unit)` | 血量上限 |
+| `ShouldUnitPowerBeSecret(unit, powerType)` | 能量 |
+| `ShouldSpellAuraBeSecret(spellID)` | 单个法术的光环是否 secret（**返回布尔**） |
+| `GetSpellAuraSecrecy(spellID)` | 单个法术的光环保密等级（**返回 `Enum.SecrecyLevel` 枚举**） |
+| `CanCompareUnitTokens(a, b)` | `UnitIsUnit` 会不会返回 nil（不是变 secret，是直接不给答案） |
+| `IsAddOnRestrictionActive()` | 当前是否处于地图限制（副本/战场/竞技场） |
+
+`Enum.SecrecyLevel` 三档：
+- `NeverSecret` —— 任何时候都能读（Decursive 只把这类法术加进跳过列表）
+- `ContextuallySecret` —— 视上下文而定（战斗/地图限制触发）
+- `AlwaysSecret` —— 永远是 secret（暴雪单独标记的法术）
+
+**用法**：脱战跑一次 `/cy secrets`，战斗中再跑一次，**对比两组的差异**——
+差异项就是「战斗中会变 secret」的部分。写完新职业后对着这个清单检查你的读取路径。
+
+#### `/cy auraprobe` —— 逐字段试读
 
 无限服的 secret 机制会让部分光环字段在战斗中变成不可比较的值。`/cy auraprobe` 逐字段试读，
 输出 `name / spellId / expirationTime / applications` 各自能不能用：
@@ -598,95 +773,151 @@ return (action_hotkey, current_step, unit_info)
 
 ## 十六、无限服（1.60.1 / Interface 16001）适配
 
-`core/forever.lua`、`class/Paladin.lua`、`Arasaka/class/paladin_logic.py`、
-`Arasaka/keymap/paladin.yml`、`Arasaka/config.yml` 的圣骑士段均已改为无限服版本。
-正式服原版备份未随仓库分发（如需从原版回退，自行保留一份 `0.0.1-retail` 的副本）。
+`core/forever.lua` 与各职业的 `class/*.lua`、`Arasaka/class/*_logic.py`、
+`Arasaka/keymap/*.yml`、`Arasaka/config.yml` 的职业段均已改为无限服版本。
+职业专属细节见 `Progress/<职业>.md`。
+
+> **零售（正式服）分支已彻底移除**：`C_SpecializationInfo` / `rangeSpecID` /
+> `spellsList` / `heroTalents` / `bossID` / `difficutlyToText` / `noSecretAuras` /
+> `C_AssistedCombat` / 蓄力 / `C_Scenario` 首领战 / `ENCOUNTER_*` 事件 / 切天赋法术 ID
+> 全部删除，`Cyber_Deck.toc` 锁定 `## Interface: 16001`。
+> 插件现在是**无限服专用**，在零售客户端上不会加载。
+>
+> 正式服原版备份未随仓库分发（如需从原版回退，自行保留一份 `0.0.1-retail` 的副本）。
 
 ### 判定与降级
 
-| 项 | 正式服 | 无限服 | 处理 |
+| 项 | 正式服 | 无限服 | 处理（**零售分支已删除，只剩无限服路径**） |
 |----|--------|--------|------|
-| TOC 接口 | 120000+ | 16001 | `## Interface: 16001, 120000, 120001, 120005` |
-| 专精 | `C_SpecializationInfo` 返回 65/66/70 | 每职业一个伪专精（圣骑士 1486），真实定位看天赋 | `F:GetActiveSpecIndex()`：**优先**用专精天赋节点（见下），读不到再依次退回树名 → 经典天赋树 → 技能探测 → treeIDs 顺序 |
+| TOC 接口 | 120000+ | 16001 | `## Interface: 16001` |
+| 专精 | `C_SpecializationInfo` 返回 65/66/70 | 每职业一个伪专精（各职业 ID 不同），真实定位看天赋 | `F:GetActiveSpecIndex()`：**优先**用专精天赋节点（见下），读不到再依次退回树名 → 经典天赋树 → 技能探测 → treeIDs 顺序 |
 | 技能 | 固定 spellID | 同一技能多个 rank | `F:ResolveSpellID(name)`：先用 `core/forever_data.lua` 离线表取“已学会的最高 rank”，再用法术书兜底（覆盖天赋技能）；未学会写 255 |
-| 英雄天赋 / 一键辅助 | 有 | 无 | 20 / 13 号像素恒 0 |
-| 药水 | 2413xx | 经典药水 | `F.itemGroups` 两套物品 ID（决策层暂不自动喝药，只上报冷却） |
-| 法力 | 仅秘密值时写 12 | 无秘密值 | 无限服恒按百分比写 12.能量值 |
+| 英雄天赋 / 一键辅助 | 有 | 无 | **像素与代码已删除** |
+| 蓄力 / 首领战 / 难度 | 有 | 无 | **像素与代码已删除** |
+| 药水 | 2413xx | 经典药水 | `F.itemGroups` 用经典物品 ID（决策层暂不自动喝药，只上报冷却） |
+| 法力 | 仅秘密值时写 12 | 无秘密值 | 无限服恒按百分比写 10.能量值 |
+| 「施法技能」「法术失败」像素 | 查 `spellsList`（正式服 ID）→ 查不到恒为 0 | 经典 ID | 改查 `blocks.spells[spellId].index`（由 `ResolveSpellID` 建好的映射） |
 
-### 圣骑士像素索引（三系共用，编号已压缩为连续值）
+### 专精判定（通用机制）
 
-| 索引 | 含义 |
-|------|------|
-| 1~8 | 锚点 / 职业 / 专精 / 有效性 / 战斗 / 移动 / 施法 / 引导 |
-| 9 | 生命值（%） |
-| 10 | 能量值（无限服 = 法力 %） |
-| 11 | **空**（原虔诚光环，已移除，改为手动开） |
-| 12 | 法术失败 |
-| 13 | 目标类型（分段编码，见下） |
-| 14 | 队伍类型 |
-| 15 | 队伍人数 |
-| 16 | 首领战 |
-| 17 | 难度 |
-| 18 | 圣印：1 正义 2 命令 3 十字军 4 光明 5 智慧 6 愤怒 7 公正 |
-| 19~21 | 施法技能 / 施法目标 / 目标距离 |
-| 22 | **自动攻击**：1 = 正在近战平砍（事件驱动） |
-| 23 | 神恩术剩余秒 |
-| 24 | 圣光灌注层数 |
-| 25 | 敌人人数 |
-| 26 | 爆发开关 |
-| 27~37 | 技能 CD：制裁之锤 / 圣盾术 / 圣佑术 / 圣疗术 / 神圣震击 / 审判 / 奉献 / 驱邪术 / 愤怒之锤 / 神圣打击 / 神圣愤怒 |
-| 38~41 | 大红冷却 / 延迟 / 驱散开关 / 5码敌人 |
-| 42 | 清洁术 |
-| 43 | 正义之怒（冷却） |
-| 44~45 | 圣光术 / 圣光闪现 —— **已不采集 CD**（无冷却），块保留但 config 不再读取 |
-| 46~47 | 正义之怒（buff）/ 目标施法 |
-| 48~49 | 神圣之盾 / 神恩术（冷却 + 是否学会） |
-| 50~56 | 七种圣印「是否学会」探测：50 正义 51 命令 52 十字军 53 光明 54 智慧 55 愤怒 56 公正 |
-| **57** | 队伍块 `start`（是起始偏移，队友 1 的生命值落在 58） |
-| **58~207** | 队伍块：每人 **5 格**（生命值 / 职责 / 驱散 / **圣光守望** / **圣光誓约**），30 人 × 5 = 150 |
-| **208** | 圣印剩余秒（`type = "aura"`，auras 计时写入，0 = 没挂/到期） |
+无限服每职业只有一个伪专精，真实定位看天赋。
+三层降级：**traitNode 探针** → **招牌技能探测** → **treeIDs 顺序**。
 
-> 队伍块的算法：`start + (i-1)*num + 偏移`。`start=57`、`num=5` 时
-> 队友 1 = 58~62，队友 30 = 202~207。
->
-> **编号已压缩，无空洞**。以前 9/10/27/33-35/43/50-57/61-64 这些空位都填上了；
-> 现在只有 44/45（圣光术/圣光闪现）内容作废，但编号仍占着。
->
+各职业的具体探针节点和招牌技能见对应职业文档
+（当前：[`Progress/paladin.md`](Progress/paladin.md)）。
 
-`目标类型` 的编码（`main.lua:623 getTargetDispelType`）不是 0/1/2/3，而是三段区间：
-
-| 区间 | 含义 |
-|------|------|
-| `0` | 无目标 / 超出射程 / 目标已死（`updateTargetValid` 只在 `inRange and not isDead` 时才算） |
-| `1~10` | 敌对：`1` = 身上没有可驱散光环，`2~10` = 有（颜色曲线细分） |
-| `11~20` | 友善：`11` = 没有可驱散光环，`12~20` = 有 |
-
-决策层用 `1 <= 目标类型 <= 10` 判敌。早期写成 `== 1`，会让「带可驱散 buff 的敌人」
-被当成非敌人，防护/惩戒整条战斗链都不走。
-
-### 专精判定（traitNode）
-
-数据来自 ForeverDB `Talents.lua`（build 1.60.1.70862）：圣骑士三个专精各有一个**独有**天赋，
-都要 10 点前置，同一套天赋不可能同时点亮，所以拿来当专精探针最可靠：
-
-| 专精 | 天赋 | traitNode |
-|------|------|-----------|
-| 神圣 | Divine Favor（神恩术） | 105325 |
-| 防护 | Templar's Bulwark（圣殿骑士壁垒） | 105625 |
-| 惩戒 | Seal of Command（命令圣印） | 105696 |
-
-`C_Traits.GetNodeInfo(cfg, node).activeRank > 0` 命中哪一个就是哪一系。
-10 级以下三个都没点，退回“天赋点数额度最多”的老逻辑（此时专精也不影响决策）。
+> ⚠️ **treeIDs 顺序这层不可靠** —— 无限服 `C_Traits.GetTreeInfo` 拿不到天赋树中文名
+> （`树[1] id=1100 name=nil`），只能按 treeID 顺序猜，实测会把点数堆到第 1 位。
+> 补齐 treeID→专精 映射后可以**直接按树判定专精，完全不依赖天赋**。
 
 ### 离线技能表（core/forever_data.lua）
 
-`CyberDeck.ForeverSpellData.PALADIN` = 140 条 `{学习等级, spellID}` 训练师技能（1–60 级）。
+每个职业一段 `{学习等级, spellID}` 训练师技能（1–60 级），格式 `{level, spellID}`。
+9 个职业全都有（合计 1314 条）：战士 98 / 圣骑 140 / 猎人 122 / 盗贼 90 /
+牧师 207 / 萨满 164 / 法师 157 / 术士 146 / 德鲁伊 190。
 
 - 生成：`python Arasaka/other/gen_forever_spells.py`（自动拉 ForeverDB manifest 并校验 sha256）
 - 中文名不写死：运行时 `C_Spell.GetSpellInfo(spellID).name` 取，自动跟随客户端语言
-- 作用：同一技能多个 rank 时，**按等级从高到低**找第一个 `IsSpellKnown` 的，比扫法术书的“后写覆盖”准
-- 天赋技能（神恩术/神圣震击/神圣之盾/命令圣印/忏悔/圣殿骑士壁垒/圣光灌注等）不在训练师表里，仍由法术书补
+- 作用：同一技能多个 rank 时，**按等级从高到低**找第一个 `IsSpellKnown` 的，比扫法术书的「后写覆盖」准
+- 天赋技能不在训练师表里，仍由法术书补
 - 来源署名：**Data from ForeverDB.net**（GPL-3.0 section 7(b)，勿删文件头注释）
+
+#### 命令行查询工具（免 key，直接查 spellID）
+
+```bash
+python Arasaka/other/query_forever.py 4987          # 查法术：等级、名称、效果
+python Arasaka/other/query_forever.py 4987 --json   # 输出结构化 JSON
+python Arasaka/other/query_forever.py --search Purify   # 按名字搜
+python Arasaka/other/query_forever.py --build       # 对比本地客户端 vs 数据源 build
+```
+
+免 key 时走 `wow-forever.gg` 网页抓取，输出人类可读摘要：
+
+```
+spellID 4987
+  网页    Cleanse is a Paladin ability in WoW Forever, learned at level 42: Holy school.
+  网页    removing 1 poison effect, 1 disease effect…
+  详情页  https://wow-forever.gg/db/spells/4987
+```
+
+**想要完整结构化数据就申请 API key**（免费额度 5000 次/天、30 次/分钟）：
+
+| 项 | 说明 |
+|----|------|
+| 申请 | https://foreverdb.net/developers （用 Battle.net 登录，在账户 access box 里申请） |
+| 认证 | `X-API-Key: fdb_xxx` header，或 `Authorization: Bearer fdb_xxx` |
+| 基础地址 | `https://api.foreverdb.net`（**不要**用主站域名，会被机器人检查拦） |
+| 查单个法术 | `GET /api/v1/spells/{id}` |
+| 搜法术 | `GET /api/v1/spells?q={关键词}&limit=10` |
+| 查物品 | `GET /api/v1/items/{id}` ／ 搜 `GET /api/v1/items?q=&quality=&class=&minLevel=` |
+| 查职业 | `GET /api/v1/classes/{name}`（如 `warrior`） |
+| 查天赋 | `GET /api/v1/talents` |
+| 查版本变更 | `GET /api/v1/builds/latest` ／ `GET /api/v1/builds/{build}?type=ability&class=paladin&change=changed` |
+| 接口目录 | `GET https://api.foreverdb.net/api/v1`（**不需要 key**，返回全部端点） |
+| 多语言 | 加 `lang=zh-CN` / `lang=de` / `lang=fr` |
+
+给工具配 key：设环境变量 `FOREVERDB_API_KEY=fdb_xxx`。
+
+> ⚠️ **免费额度必须署名**：展示数据的地方要有
+> `<a href="https://foreverdb.net">Data from ForeverDB.net</a>`，否则 key 可能被撤销。
+> **别把 key 打进公开发布的插件里** —— 官方建议由自己服务器调 API 再分发数据。
+
+#### 直接可查的网址（收藏用）
+
+| 想查什么 | 网址 | 备注 |
+|---------|------|------|
+| 单个法术（**最常用**） | `https://wow-forever.gg/db/spells/{spellID}` | 免 key。含等级/学派/法力/射程/施法时间/**驱散效果**/各 rank 链接 |
+| 法术按名字找 | `https://wow-forever.gg/db/spells/?search={关键词}` | |
+| 某职业全部法术 | `https://wow-forever.gg/classes/paladin/` | 9 个职业都有；也有 `/talents/paladin/` 天赋树 |
+| 天赋模拟器 | `https://wow-forever.gg/talents/paladin/` | 能看专精归属 |
+| 单个物品 | `https://foreverdb.net/items/{itemID}` | |
+| 物品搜索 | `https://foreverdb.net/items?q={关键词}` | |
+| **无限服 vs 经典旧世差异** | `https://foreverdb.net/datamine` | 「Forever 改了什么」的权威汇总 |
+| 单个法术的版本变化史 | `https://wow-forever.gg/db/spells/{spellID}` 页面底部 | 每个 build 的数值变化 |
+| 玩家实测掉落/价格 | `https://foreverdb.net/seen-in-game` | 标注 Verified / Not confirmed |
+| 职业法术一览（**中文**） | `https://endgametools.com/zh-CN/wow-forever/spells` | 按职业列 1~60 级每个法术 |
+| 无尽数据库（中文） | `https://wowforever.wclbox.com/` | 天赋/法术/物品/地图，逐条对照经典 |
+| 英文深度档案 | `https://bindonforever.com/` | 每条数据标注来自哪个 build |
+
+#### 数据源怎么选（各站点的权威性）
+
+**最权威的源头是游戏客户端本身** —— 无限服客户端里的数据表（DBC / Spell.dbc）就是一切的事实。
+下面这些站点都是从客户端提取的，区别只在「提取频率、呈现形式、许可条款」：
+
+| 站点 | 数据来源 | 特点 | 适合 |
+|------|---------|------|------|
+| **ForeverDB.net**（当前用的） | 每个 build 从客户端提取 + 重建 | 有 `addon-manifest.json`（含 **sha256 校验**）+ 原始 `Spells.lua`；另有 API 和玩家上传的实测数据 | 自动化生成、需要 sha256 校验、许可清晰 |
+| **endgametools.com/wow-forever** | 直接读客户端 | 中文界面，按职业列出 1~60 级每个法术及等级/消耗/射程/施法时间/冷却；标注 build 版本 | 人工查证某个法术在几级学 |
+| **wowforever.wclbox.com** | 直接读客户端 | 天赋/法术/物品/地下城/世界地图，逐条与经典旧世对照 | 查「无限服改了什么」 |
+| **bindonforever.com** | 每个 build 读客户端 + 对照暴雪公告 | 每条数据都标注来自哪个 build、来自文件/服务器/实测 | 查数值改动历史 |
+| **wow-forever.gg/db/spells/** | 客户端 + 版本历史 | 单个法术一页，含各 build 的数值变化 | 查某个法术的版本差异 |
+| **游戏内运行时**（`C_SpellBook` / `C_Spell`） | 服务器实际下发的数据 | **绝对权威**，服务器改了立刻生效 | 判断「你这个号实际会学到什么」 |
+
+> ⚠️ **离线表只是补充，不是真相**。
+> 离线表的唯一价值是「等级 → rank」的映射关系（运行时扫法术书拿不到这个映射），
+> 具体的「学没学到」永远以 `C_SpellBook.IsSpellKnown(spellID)` 为准。
+>
+> **离线表会落后于客户端**：服务器每次热修都会改客户端文件。生成脚本会自动从
+> `Meta.lua` 读当前 build 号写进文件头 —— 看到文件头的 build 和客户端 `Wow.exe` 版本
+> 对不上，就重跑一次生成脚本。
+
+### secret 值机制（无限服 1.60.1 也有）
+
+无限服**不是**没有 secret 机制 —— 它带零售同款的 Secret Values 系统（客户端自带 `C_Secrets` API）。
+受影响的类别：**光环、冷却、单位身份（名字）、属性、威胁值、施法信息、血量上限、能量**。
+
+受限上下文（战斗 / 副本 / 战场 / 竞技场）下这些值会变成「不可比较、不可运算」的 secret 值。
+判定方式与调试命令见「十四、调试技巧 → secret 探测」。
+
+| 判定手段 | 说明 |
+|---------|------|
+| `C_Secrets.ShouldXxxBeSecret()` | **权威**：直接问「当前上下文会不会变 secret」 |
+| `C_Secrets.GetSpellAuraSecrecy(spellID)` | 单个法术的保密等级（`NeverSecret` / `ContextuallySecret` / `AlwaysSecret`） |
+| `issecretvalue(v)` | 事后判断「这个值已经是 secret 了」 |
+| `C_Secrets.CanCompareUnitTokens(a, b)` | `UnitIsUnit` 是否还能用（不能用时返回 nil，不是 secret） |
+
+> ⚠️ `UnitCreatureType` 在地图限制下返回 secret 值 → **不能做 `==3` / `==6` 判断**
+> （亡灵/恶魔检测因此不可靠，客户端的 SpellActivationOverlay 也是用 `canaccessvalue` 兜底的）。
 
 ### 自动攻击状态（24 号像素）
 
@@ -711,74 +942,6 @@ return (action_hotkey, current_step, unit_info)
 
 `C_Spell.IsCurrentSpell(6603)` 理论上也能判自动攻击，但经典内容下行为不稳定，
 所以只作事件方案的参考，没有依赖它。
-
-### 圣印计时（core/auras.lua）
-
-圣印的 30 秒持续时间交给光环系统推算，不再自己维护锁：
-
-| 层 | 手段 | 适用 |
-|----|------|------|
-| 1 | 按 **buff 名**匹配 `scanAuras("player","HELPFUL",40)` | 战斗外，最准 |
-| 2 | 按 **spellID** 复查 `C_UnitAuras.GetPlayerAuraBySpellID(id)` | 多一层保险（实测战斗中它也读不到） |
-| 3 | **施放计时**：`CyberDeck.Auras["圣印"]` 的 `expirationTime` | 战斗中唯一可用的手段 |
-
-实现：
-
-```lua
--- core/auras.lua 的 auras[2]
-["圣印"] = { remaining = 0, duration = 30, expirationTime = nil, sealValue = 0 },
-
--- core/forever.lua 的 MarkForeverAuraCast（施放成功时）
-local aura = CyberDeck.Auras["圣印"]
-aura.sealValue = seal.value                    -- 1 正义 … 6 愤怒 7 公正
-aura.expirationTime = GetTime() + aura.duration
-```
-
-不挂 `addAuras`：7 种圣印跨 rank 共约 30 个 spellID，列全不划算；
-`MarkForeverAuraCast` 本来就能把 spellID 解析成中文名再匹配 `SEAL_ORDER`，直接写更省。
-
-为什么不用自维护的 `lastSealUntil`：它在战斗外每次扫描到圣印都被改成 `now+2`，
-进战斗瞬间锁就失效 → 像素归 0 → 决策层以为没挂 → **每次进战斗重放一次圣印**。
-施放计时只在成功施放时写入，战斗外扫描不会碰它。
-
-边界：
-
-- **死亡**：`PLAYER_DEAD` 里清空 `expirationTime` / `sealValue`，否则复活后误判 30 秒
-- **被驱散 / 手动取消**：计时仍在，最多空窗 30 秒（概率低，不额外处理）
-- **战斗中补印**：`UNIT_SPELLCAST_SUCCEEDED` 的 `spellID` 可能是 secret，
-  计时建不起来；30 秒后自然归 0 再补，不会卡死
-- `duration = 30` 对应愤怒圣印实测时长（提示框显示剩余秒）
-
-顺带白送一个 **208 号像素**（`type = "aura"`）：`updateAuraBlocks()` 把
-`Auras["圣印"].remaining` 写进去，GUI 增益区显示「圣印剩余: 27s」。
-
-### 兜底起手（`/startattack`）
-
-`specialSpells` 里放的是**完整宏体**（不拼 `/cast`），与 `staticSpells` 同位置时优先：
-
-```lua
-specialSpells = {
-    [35] = "/startattack [harm,nodead]",
-},
-```
-
-- `/startattack` **不占 GCD**，可以随时按；
-- `[harm,nodead]` 保证对友方/尸体不执行，不产生「无效目标」红字；
-- 热键 `ALT-SHIFT-/`（第 185 个宏位）；
-- `gen_paladin_keymap.py` 读取 `specialSpells`，名字由宏命令推导
-  （`startattack` → `开始攻击`，见 `SPECIAL_ALIAS`）。
-
-决策层用的是**兜底**位置，不是第一优先级：
-
-```python
-# 防护/惩戒战斗分支的**最后一个** elif
-elif 自动攻击 == 0 and _upkeep_ok("开始攻击", 2):
-    current_step = "开始攻击"
-```
-
-为什么必须放最后：`自动攻击` 像素在 `/reload` 后、停手、切目标、目标死亡时都是 0。
-放在分支最前面会把后面所有 `elif`（补盾/圣印/审判…）全部挡死，表现为「一个技能都不放」。
-放末尾 + 2 秒节流后，最坏情况只是每 2 秒多按一次 `startattack`，任何技能都不会被抢占。
 
 ### 窗口不抢键盘焦点（`WS_EX_NOACTIVATE`）
 
@@ -810,9 +973,9 @@ GUI 把像素值分成三块展示，避免语义混淆：
 |------|----------|----------|
 | 实时状态 | config 职业/专精段的普通字段 | 血量、能量、战斗、距离、敌人数量… |
 | 技能冷却 | config 的 `spells` 子段 | 0 = 就绪，1~254 = 剩余秒，255 = 未学会 |
-| 增益状态 | config 职业级的 `buff_fields` 名单 | 255 = 有 / 0 = 没有（圣印显示名称，神恩术显示剩余秒） |
+| 增益状态 | config 职业级的 `buff_fields` 名单 | 255 = 有 / 0 = 没有（有的显示名称，有的显示剩余秒） |
 
-`正义之怒` 在「实时状态」区显示 255 容易被误读成「不可用」——
+「有 buff 就写 255」型字段在「实时状态」区容易被误读成「不可用」——
 实际它们是 `0/1` 写入后乘以 255 的结果，**255 表示 buff 存在**。移进独立分区并翻译成
 `有/无` 后，两种 255 不再混在一起。
 
@@ -823,103 +986,56 @@ GUI 把像素值分成三块展示，避免语义混淆：
 同一位置还有 `probe_fields`（探测块名单），这些块**不参与冷却显示**：
 
 ```yaml
-  probe_fields: [正义圣印, 命令圣印, 十字军圣印, 光明圣印, 智慧圣印, 愤怒圣印, 公正圣印,
-                 正义之怒CD]
+  probe_fields: [<该职业的「是否学会」探测块>, ...]
 ```
 
 探测块的像素含义是 `0 = 已学会 / 255 = 未学会`，不是剩余秒数。它们留在冷却区会直接误导
-（例如圣印明明挂着、提示框写着「剩余 27 秒」，面板却显示 `愤怒圣印: 0`）。
-`get_class_spec_view_data()` 把它们从 `spells_list` 里过滤掉，像素和决策层数据完全不动，
-所以冷却区从 24 项收敛到 16 项。圣骑士当前挂的是哪个圣印，看增益区的「圣印」即可。
+（例如某个 buff 明明挂着、提示框写着「剩余 27 秒」，面板却显示 `X: 0`）。
+`get_class_spec_view_data()` 把它们从 `spells_list` 里过滤掉，像素和决策层数据完全不动。
 
-**`神圣之盾CD` / `神恩术CD` 不在探测名单里**——它们是有真实冷却的技能
-（10 秒 / 2 分钟），只是名字带 CD 后缀、长得像探测块，必须留在冷却区显示。
+> ⚠️ **名字带 `CD` 后缀的不一定是探测块** —— 有真实冷却的技能（`XXXCD`）长得像探测块，
+> 但必须留在冷却区显示。区分依据是**这个技能到底有没有真实冷却**，不是名字长相。
+> 各职业的探测名单见 `Progress/<职业>.md`。
 
-`神圣之盾` 的 buff 块（24 号）**已彻底删除**：战斗中的 aura 是 secret 值，
-名称和剩余时间都读不到可靠数据，采集它没有意义。决策只看 `神圣之盾CD == 0`，
-和审判完全一致——盾持续 10 秒、CD 也是 10 秒，卡 CD 补即可；
-buff 被提前打掉时 CD 还在转，CD 一好就补就能无缝覆盖。
-没学会时 CD 像素是 255，条件不成立，不会空按。
+### 9 个职业的现状
 
-### 按键映射（自动生成）
+| 职业 | 职业 ID | 像素布局 | 决策层 | keymap | 职业文档 | 实机验证 |
+|------|-------|---------|--------|--------|---------|---------|
+| 圣骑士 | `2` | ✓ | ✓ 已完整验证 | ✓ | [paladin.md](Progress/paladin.md) | **已完整验证** |
+| 战士 | `1` | ✓ | ✓ 初版 | ✓ | [warrior.md](Progress/warrior.md) | 未校准 |
+| 猎人 | `3` | ✓ | ✓ 初版 | ✓ | [hunter.md](Progress/hunter.md) | 未校准 |
+| 盗贼 | `4` | ✓ | ✓ 初版 | ✓ | [rogue.md](Progress/rogue.md) | 未校准 |
+| 牧师 | `5` | ✓ | ✓ 初版 | ✓ | [priest.md](Progress/priest.md) | 未校准 |
+| 萨满 | `7` | ✓ | ✓ 初版 | ✓ | [shaman.md](Progress/shaman.md) | 未校准 |
+| 法师 | `8` | ✓ | ✓ 初版 | ✓ | [mage.md](Progress/mage.md) | 未校准 |
+| 术士 | `9` | ✓ | ✓ 初版 | ✓ | [warlock.md](Progress/warlock.md) | 未校准 |
+| 德鲁伊 | `11` | ✓ | ✓ 初版 | ✓ | [druid.md](Progress/druid.md) | 未校准 |
 
-`Arasaka/keymap/paladin.yml` 由 `Arasaka/other/gen_paladin_keymap.py` 从
-`class/Paladin.lua` 的 `MacrosList` 反推宏位生成，规则与 `core/macro.lua` 的
-`macroKind`（7 组修饰键 × 39 键 = 273）完全一致：
+**每个职业的决策层互不共用工具代码** —— 各自的文件顶部自带一套内部小工具
+（读数打包 / 冷却读取 / 区间判断 / 节流 / 驱散选人），改一个职业不影响其它 8 个。
 
-- 动态技能 **7 个**（圣光术 / 圣光闪现 / 神圣震击 / 清洁术 / 圣疗术 / 圣光誓约 / **圣光守望**）× 30 = **210** 个宏位，`unit 1-30`；
-- 静态技能 **33 个**（含 `[@mouseover]清洁术`）+ 1 个完整宏体 `/startattack`（静态槽 33），`unit 0`；
-- 合计 **244** 个宏位（7×30 + 34），`macroKind` 上限 273；
-- 动态宏的 unit 1 宏体是 `/cast [group:raid,@raid1]X;[group:party,@player]X;[@player]X`。
-  无限服是 1.12 核心，`[nogroup]`（5.0.4 才有）不认，所以第三段用无条件的 `[@player]` 兜底，
-  单人也落在自己身上；
-- **宏按钮是 UIParent 下的隐藏 Frame**（`SecureActionButtonTemplate` + `SetOverrideBindingClick`），
-  **不依赖动作条**，技能不拖出来也能触发；
-- 改了 `MacrosList` 后重跑：`python Arasaka/other/gen_paladin_keymap.py`。
+**其它 8 个职业的决策层是初版** —— 能跑、优先级合理，但没经过实机校准。
+接的时候按这个顺序打磨：先跑 `/cy spec` 确认专精判定，再打 BOSS 看技能选择对不对。
 
-### 决策层（paladin_logic.py）
+每个职业的 `Progress/<职业>.md` 里有：像素索引表、技能与块索引对照、
+**内部小工具表**、**决策优先级表（技能 + 触发条件 + 限定专精 + 节流）**、
+阈值常量、待办清单。
 
-| 专精 | 优先级 |
-|------|--------|
-| 神圣 | 保命(圣盾<15%→圣疗) → 清洁术驱散 → **圣光守望震击**（队友身上有 1310909 时优先给他震击）→ **圣光誓约**（坦克没 buff 就补）→ 圣光术(<60%) → 圣光闪现(≤90%) → 神圣震击(<95%) → 智慧圣印（进攻块首位）→ 审判 → 神圣打击 |
-| 防护 | 圣疗自救(<10%) → 补正义之怒 → **战斗且有敌人时**：换圣印 → 补神圣之盾（只看 CD）→ 审判 → **奉献(5码内 ≥2)** → 神圣打击(5码) → 神圣愤怒(亡灵/恶魔 ≥2) → 兜底起手；**战斗中暂无敌人**（目标刚死、未脱战）：仍补圣印；**脱战：什么都不做** |
-| 惩戒 | 自疗圣光闪现(<45%) → 制裁之锤打断 → **战斗且有敌人时**：愤怒之锤(≤20%,30码) → 换圣印 → 审判 → 神圣打击(5码) → 驱邪术(亡灵/恶魔,30码) → **奉献(5码内 ≥2)** → 兜底起手；**战斗中暂无敌人**：仍补圣印（命令，缺蓝智慧）；**脱战：什么都不做** |
+被移除的 4 个职业（死亡骑士 / 恶魔猎手 / 唤魔师 / 武僧）在这个服务器上不存在，不要加。
 
-**防护的圣印选择**按法力**回差**判断（`能量值` 即法力百分比）：
+**技能名的来源**：`class/*.lua` 里的技能用**中文名**（不写 spellId），
+由 `core/forever.lua:ResolveSpellID(name)` 在运行时解析到「已学会的最高 rank」。
+中文名 + 等级清单抓自 endgametools 的无限服职业法术页。
 
-| 法力 | 当前挂智慧且**未到期** | 其他情况 |
-|------|----------------------|----------|
-| < 50% | —（立即换） | **立即**换智慧 |
-| ≥ 50% | **保持不动**，等它自己到期 | 换回愤怒 |
+**改完职业相关代码后跑这几个校验**：
 
-- 低于 50% 是**立即**切，不管当前圣印还剩多久；
-- 回到 50% 以上**不立即取消**，让这颗智慧把剩余时间跑完，下次到期才换回愤怒
-  （中途取消等于白丢一个 GCD + 一份回蓝）。
-- 剩余时间优先读 **208 号像素**（auras 计时）；读不到（战斗中 `spellID` 是 secret，
-  计时建不起来）时退回本地估算：`SEAL_DURATION(30s) - 距上次下达换智慧的时间`。
-
-候选顺序（取第一个已学会的）：`<50%` 智慧→愤怒→正义；`≥50%` 愤怒→正义→智慧。
-探测像素 69-75 表示是否学会（0 = 会 / 255 = 不会），智慧没学会时自动退到下一个候选，不会空按。
-
-> 神圣（<35% 智慧）与惩戒（<25% 智慧）仍是单点阈值，本次未调整。
-
-**补印只看 20 号编号**
-
-圣印施放成功后由插件记 30 秒（`core/auras.lua` 的 `expirationTime`），到期后
-`UpdateForeverAuras` 自动把 20 号编号归 `0`。所以决策层补印的判据就一条：
-
-```
-当前圣印编号 != 想要圣印编号  →  补（2 秒防抖，只盖像素刷新的那一两个 tick）
+```bash
+python .workbuddy/check_class_integration.py   # class ↔ config ↔ keymap ↔ logic 四方一致
+python .workbuddy/check_integrity.py            # 五维交叉校验
+python .workbuddy/check_readme.py               # 文档与代码一致
 ```
 
-| 编号 | 剩余 | 决策 |
-|---|---|---|
-| 6（愤怒） | 20s | 不动 |
-| 6（愤怒） | 0s | 不动（编号还在，等它归 0） |
-| **0** | 0s | **补**（到期了） |
-| 6（愤怒），法力 40 | 20s | 换智慧 |
-
-208 号「圣印剩余」只参与一件事：**挂智慧回蓝时判断这颗智慧有没有到期**
-（未到期就保持，别中途取消）。补印不读它，避免刚按完像素还没刷新时被误判成到期。
-
-不需要节流的那种时间闸：编号对上就不动作，一次换印最多按一次。
-
-已删除正式服残留：神圣能量、圣洁鸣钟、圣洁武器、英雄天赋、一键辅助 `action_map`、
-`failed_spell_map`（无限服 `spellsList` 不含经典技能 ID，法术失败像素恒 0）。
-
-### 验证
-
-- `luaparse`（Lua 5.1）解析 **24 个** Lua 文件通过（13 职业 + 9 个 core 模块 + `main.lua` + `gui.lua`，不含 `Libs/`）；
-- **fengari 行为测试**（`forever_harness.lua`，独立于仓库）：**34 项**通过
-  （专精判定 / 技能名→rank / 圣印像素 / 圣印计时 / 自动攻击 / 离线表）；
-- **决策链路测试**（`paladin_forever_test.py`，独立于仓库）：**68 项**通过
-  （config↔Lua 索引一致性、块编号不撞队伍块、逻辑用到的技能都有宏键、圣印回差/乐观记录等）；
-- 游戏内 `/cy spec` 看专精/点数/解析到的 spellID，`/cy gui` 核对像素。
-
-### 仍未适配
-
-其余 12 个职业的 `class/*.lua` 与 `Arasaka/class/*_logic.py` 仍是正式服版本，
-在无限服只会加载到 0 值；需要时按圣骑士这套流程逐个改。
+改宏表后要重生成 keymap：`python Arasaka/other/gen_class_keymap.py`
 
 ---
 
@@ -938,7 +1054,8 @@ buff 被提前打掉时 CD 还在转，CD 一好就补就能无缝覆盖。
 2. **这个「计时」需求能不能挂到 `core/auras.lua`？**
    只要是「施放成功后持续 N 秒」的东西，一律用光环状态机，不要自己维护 `until` 变量。
 3. **这个「选人 / 计数」需求 `Arasaka/utils.py` 有没有？**
-   20 个选择器覆盖了低血、职责、带 buff、缺 buff、按层数、按驱散类型、批量计数。
+   25 个函数覆盖了低血、职责、带 buff、缺 buff、按层数、按驱散类型、批量计数。
+   **这些是跨职业通用件，即使当前职业没用到也不要删**（将来加职业直接 import）。
 
 ### 17.2 想做什么 → 改哪里
 
@@ -950,94 +1067,121 @@ buff 被提前打掉时 CD 还在转，CD 一好就补就能无缝覆盖。
 | 加一个「有 / 没有」的状态 | `class/<职业>.lua` + `main.lua` | `[N] = { type = "block", name = "…" }`，在对应 `updateXxx()` 里 `CreatTexture(idx, 1 or 0)` |
 | 加一个可切换开关 | `core/core.lua` + `core/quickbutton.lua` | `SwitchXxx()` 写像素 + `SaveConfig()`；按钮面板自动收录 |
 | 加一个宏 | `class/<职业>.lua` 的 `MacrosList` | 普通技能进 `staticSpells`；`@raidN` 循环施放进 `dynamicSpells`（每个占 30 位）；完整宏体（`/castsequence`、`/startattack`）进 `specialSpells` |
+| 加一条决策分支（技能优先级） | `Arasaka/class/<职业>_logic.py` | 读数用本文件自带的 `Ctx`（`ctx.hp/ctx.ready(name)/ctx.melee`…）；条件用本文件的 `_is_enemy` / `_in_melee`；维持类操作加 `_upkeep_ok(name, 秒)` 防抖。**分支顺序 = 优先级**，第一个满足就返回 |
+| 调决策松紧（阈值） | logic 顶部常量（`AOE_3` / `AOE_5` / `HEAL_LOW`…） | 改常量即可，不必动逻辑代码。各职业的常量清单见 `Progress/<职业>.md` 的「阈值常量」表 |
 | 读敌人数量 / 5 码敌人 | `main.lua:updateEnemyCount` | 已有 `state.enemyCount` / `state.enemyCount5y` → 像素 `敌人人数` / `5码敌人` |
 | 读目标距离 | `main.lua:updateTargetRangeBlock`（LibRangeCheck） | 像素 `目标距离`，单位码 |
 | 判断该不该放地面 AoE | `main.lua:updateEnemyCount` 的 `enemyCount5y` | 像素 `5码敌人`（41 号）= 姓名版里 ≤5 码且战斗中的人数；**依赖姓名版开启** |
 | 读目标类型（敌对/友善） | `main.lua:updateTargetType` + `updateTargetValid` | `目标类型`：0 无/超距/死亡，1~10 敌对，11~20 友善 |
 | 读队伍某人血量/职责/驱散 | `main.lua:updateUnitFullAura` + `blocks.groups` | Python 侧直接用 `state_dict["group"]` |
-| 读药水 / 治疗石冷却 | `core/forever.lua` 的 `itemGroups` + `itemBlocks` | 像素名 `大红冷却` / `大蓝冷却` / `治疗石冷却`，物品 ID 两套客户端各一份 |
+| 读药水 / 治疗石冷却 | `core/forever.lua` 的 `itemGroups` + `itemBlocks` | 像素名 `大红冷却` / `大蓝冷却` / `治疗石冷却`，物品 ID 用无限服经典 ID |
 | 让某个技能不进冷却区显示 | `config.yml` 职业级 `probe_fields` | 只影响 GUI 显示，像素和决策数据不动 |
 | 让某组字段单独一个 GUI 分区 | `config.yml` 职业级 `buff_fields` | 同上，读不到该键的一侧（旧 exe）也不受影响 |
 | 加一条调试输出 | `core/forever.lua:PrintSpecDebug` | `/cy spec` 触发，**不要**塞进 `OnUpdate` 调用链 |
 | 改 GUI 布局 | `logic_gui_Tools.py` | 三分区：`update_status_display` / `update_cooldown_display` / `update_buff_display` |
-| 让插件在死亡/坐骑/打字/吃喝时不按键 | 已由调度层统一处理 | `logic_gui_Tools.py:585` 的 `if not sd.get("有效性"): continue`，无需在职业逻辑里加 |
+| 让插件在死亡/坐骑/打字/吃喝时不按键 | 已由调度层统一处理 | `logic_gui_Tools.py` 的 `if not sd.get("有效性"): continue`，无需在职业逻辑里加 |
 
 ### 17.3 已在跑的「轮子」（禁止重造）
 
 | 能力 | 现成实现 | 位置 |
 |------|----------|------|
-| 施放成功后计时 N 秒 | 光环状态机（事件驱动，13 职业各一段） | `core/auras.lua` |
-| 读自身 buff 剩余秒 | `C_UnitAuras.GetAuraDuration` + 颜色曲线 `curve255` | `main.lua:GetDefensiveAuraDuration` |
-| 读光环实例 ID（兼容老客户端） | `F:GetAuraInstanceIDs`（先试 `GetUnitAuraInstanceIDs`，退回 `GetDebuffDataByIndex`） | `core/forever.lua:734` |
-| 判断值是否为 secret | `issecretvalue(v)` | `main.lua:850` |
-| 技能名 → 已学会 rank ID | `F:ResolveSpellID(name)`（法术书索引 + 离线表） | `core/forever.lua:159` |
-| 专精判定（天赋树点数） | `F:GetActiveSpecIndex()` | `core/forever.lua:248` |
-| 写像素 | `self:CreatTexture(index, value)` | `core/block.lua:41` |
-| 近战平砍状态 | `PLAYER_ENTER_COMBAT` / `PLAYER_LEAVE_COMBAT` → `F.autoAttackOn` | `core/forever.lua:624` |
-| 找低血队友 / 缺 buff 队友 / 驱散目标 | 20 个 `get_*` 选择器 | `Arasaka/utils.py` |
-| 热键查找与发送 | `get_hotkey()` + `send_key_to_wow()` | `Arasaka/utils.py:50` / `:686` |
-| 像素 → state_dict | `build_state_dict()`（含 spells 子字典、group 展开） | `Arasaka/GetPixels.py:302` |
-| 决策层热重载 | `reload_logic_modules()` | `logic_gui_Tools.py:193` |
-| 宏体创建 | `loadPlayerMacros()` → `CreateMacro()`（进入世界时一次，无手动命令） | `core/macro.lua:49` |
+| 施放成功后计时 N 秒 | 光环状态机（事件驱动，当前只有圣骑士段） | `core/auras.lua` |
+| 读自身 buff 剩余秒 | `C_UnitAuras.GetAuraDuration` + 颜色曲线 `curve255` | `main.lua:updateAuraBySpellCooldown` 等 |
+| 读光环实例 ID（兼容老客户端） | `F:GetAuraInstanceIDs`（先试 `GetUnitAuraInstanceIDs`，退回 `GetDebuffDataByIndex`） | `core/forever.lua` |
+| 判断值是否为 secret | `issecretvalue(v)` | `main.lua` 的 `canaccessvalue` 兜底 |
+| 技能名 → 已学会 rank ID | `F:ResolveSpellID(name)`（法术书索引 + 离线表） | `core/forever.lua` |
+| 专精判定（天赋树点数） | `F:GetActiveSpecIndex()` | `core/forever.lua` |
+| 写像素 | `self:CreatTexture(index, value)` | `core/block.lua` |
+| 近战平砍状态 | `PLAYER_ENTER_COMBAT` / `PLAYER_LEAVE_COMBAT` → `F.autoAttackOn` | `core/forever.lua` 的 `UpdateForeverAutoAttack` |
+| 找低血队友 / 缺 buff 队友 / 驱散目标 | 25 个 `get_*` / `count_*` 选择器 | `Arasaka/utils.py` |
+| 热键查找与发送 | `get_hotkey()` + `send_key_to_wow()` | `Arasaka/utils.py` |
+| 像素 → state_dict | `build_state_dict()`（含 spells 子字典、group 展开） | `Arasaka/GetPixels.py` |
+| 决策层热重载 | `reload_logic_modules()` | `logic_gui_Tools.py` |
+| 宏体创建 | `loadPlayerMacros()` → `CreateMacro()`（进入世界时一次，无手动命令） | `core/macro.lua` |
 
-### 17.4 决策层内部小工具（`paladin_logic.py` 已定义，写新分支直接用）
+### 17.4 决策层内部小工具（**各职业自带一份**）
 
-| 函数 | 说明 |
-|------|------|
-| `_cd(spells, name)` | 取冷却值，`None` → 255（当作不可用） |
-| `_ready(spells, name)` | `CD == 0` 的布尔简写 |
-| `_int(state, key, default=0)` | 取整型状态，缺字段回默认 |
-| `_is_enemy(目标类型)` | `1 <= 目标类型 <= 10`（敌对区间，别再写 `== 1`） |
-| `_in_melee(距离, yards=10)` | 距离码 → 码数比较 |
-| `_upkeep_ok(key, interval=None)` | 节流（默认按 `_UPKEEP_INTERVAL`，兜底 3 秒）。用于补 buff 和换印防抖，**别用在主力技能上** |
-| `_seal_known(spells, seal)` | 该圣印是否已学会（探测像素 0 = 会 / 255 = 不会） |
-| `_first_known_seal(spells, order)` | 按优先级取第一个已学会的圣印；全落空时退回 `order[0]`，宁可空按一次也不让圣印卡死 |
-| `_prot_seal(spells, mana, current_seal, seal_remaining)` | 防护圣印选择：`<50%` 立即智慧；`≥50%` 且智慧未到期则保持；否则愤怒 |
-| `_holy_seal(spells, mana)` / `_ret_seal(spells, mana)` | 神圣（`<35%` 智慧）/ 惩戒（`<25%` 智慧），本次未调整 |
-| `_pick_dispel_unit(state_dict, 驱散开关)` | 魔法 > 疾病 > 中毒，内部已复用 `get_unit_with_dispel_type` |
-| （非职业层）`有效性` | 死亡 / 坐骑中 / 打字中 / 吃喝中 → **调度层** `_run_logic_loop` 已 `continue`，13 个职业共享，职业逻辑里不要再判一遍 |
+**9 个职业互不共用决策层工具** —— 没有 `battle_common.py` 这类公共模块。
+每个 `Arasaka/class/<职业>_logic.py` 在文件顶部自带一套小工具，
+只带该职业实际用到的那几个。
+
+| 需要什么 | 用哪个 |
+|---------|--------|
+| 打包 state_dict | `Ctx(state_dict, spec_name)` |
+| 技能就绪？ | `ctx.ready(name)` / `ctx.cd(name)` |
+| 取整数（缺失不炸） | `_int(state, key, default=0)` |
+| 目标是敌人？ | `_is_enemy(目标类型)`（**区间** `1~10`，不要写 `== 1`） |
+| 贴身了？ | `_in_melee(距离, yards)` / `ctx.melee` |
+| 维持类操作防重复按 | `_upkeep_ok(key, interval=3.0)` |
+| 该给谁驱散 | `_pick_dispel_unit(state_dict, 驱散开关, types)` |
+
+**加新能力就加在职业自己的文件里** —— 别去建公共模块，改一个职业不该波及其它 8 个。
+各职业带了哪几个，看对应 `Progress/<职业>.md` 的「内部小工具」表。
+
+通用约定：
+- 冷却值 `0` = 就绪，`1~254` = 冷却中（秒），`255` = 不可用
+- 敌对判定用**区间** `1 <= 目标类型 <= 10`，不要写 `== 1`
+- 节流/防抖只用在「补 buff / 换印」这类维持类操作上，**别用在主力技能上**
 
 ### 17.5 已知死代码 / 别照着抄
 
 | 位置 | 状态 |
 |------|------|
-| `core/config.lua` 的 `noSecretAuras` | 定义了 30+ 条，**没有任何代码引用**。正式服治疗职业的设计，无限服不需要 |
-| `spellsList` 里的正式服技能 ID | 606 条里无限服只存在一小部分；无限服技能一律走 `forever_data.lua` |
-| 圣骑士 200-211 索引 | 已删（WLK/TBC/11.x 技能），其它职业仍按原样 |
+| `core/config.lua` 的 `noSecretAuras` / `difficutlyToText` / `bossID` / `heroTalents` | **已删除**（零售专有，全仓零引用） |
+| `core/config.lua` 的 `spellsList`（606 条正式服 ID） | **已删除**。技能索引改由 `core/forever.lua` 的 `ResolveSpellID(name)` 按技能名解析 |
+| 零售机制像素（蓄力 / 蓄力层数 / 一键辅助 / 英雄天赋 / 首领战 / 难度） | **已删除**。无限服没有这些机制，且部分与其它字段撞像素（如 `蓄力` 与 `生命值` 都占 9 号） |
+| 各职业的 200~211 索引 | 已删（WLK/TBC/11.x 技能，无限服 60 级技能组不提供） |
 | `staticSpells` 的 `/` 前缀判断 | **已回滚**。`staticSpells` 一律拼 `/cast`，完整宏体只能放 `specialSpells` |
+
+> ⚠️ **删「当前没调用」的代码前先分类**：
+> - **通用件**（跨职业可复用、其它职业将来会用到）→ **保留**
+>   例：`Arasaka/utils.py` 的 25 个选择器函数、`main.lua` 的
+>   `updateUnitAuraCount` / `updateTargetAuraCount`（牧师「目标光环数量」块）、
+>   `updateShapeshiftForm` 里的「姿态」写入（德鲁伊块）—— 这些即使当前职业用不到也不能删
+> - **职业专属件 + 该职业不在无限服** → 可删
+>   例：酒池（武僧）、符文（死骑）、疾病判断（死骑）、防御光环（恶魔猎手）
+> - **零售机制件** → 可删
+> - **判不准的一律保留**：留着不花钱，删了要重写 |
 
 ### 17.6 重复造轮子的真实代价（本仓库踩过的坑）
 
 | 症状 | 根因 | 正确做法 |
 |------|------|----------|
-| 每次进战斗重放圣印 | 自维护 `lastSealUntil`，战斗外扫描每 0.2 秒把它覆盖成 `now+2`，进战斗锁只剩 2 秒 | 用 `auras.lua` 的 `expirationTime`，只在施放成功时写 |
+| 每次进战斗重放光环（如圣印） | 自维护 `lastSealUntil`，战斗外扫描每 0.2 秒把它覆盖成 `now+2`，进战斗锁只剩 2 秒 | 用 `auras.lua` 的 `expirationTime`，只在施放成功时写 |
 | 一个技能都不放 | 起手 `if 自动攻击 == 0` 放在战斗分支**最前面**，与后续共用 if/elif 链，一次为真挡死全部 | 兜底分支必须放**最后一个 elif** + 节流 |
 | `/cy spec` 输出刷屏 | 跨行正则删代码时吞掉函数边界，把 `PrintSpecDebug` 的 print 并进了 0.2 秒循环 | 删代码用**行号**定位（先 `grep -n` 再按行切片），不要用 `.*?` 匹配缩进 `end` |
-| 防护骑永远认为没挂圣印 | 把字段挪进 `buffs:` 子段，`state_dict["圣印"]` 消失 | 分组名单放**职业级**（`buff_fields` / `probe_fields`），字段位置不动 |
-| 神圣之盾 CD 好了不补 | 节流设成 10 秒 = 盾的持续时间 | 有真 CD 的技能只看 `CD == 0`，不要叠加节流 |
+| 永远认为没挂常驻 buff | 把字段挪进 `buffs:` 子段，`state_dict["<字段名>"]` 消失 | 分组名单放**职业级**（`buff_fields` / `probe_fields`），字段位置不动 |
+| 某个 CD 好了不补 | 节流设成了等于该 buff 的持续时间 | 有真 CD 的技能只看 `CD == 0`，不要叠加节流 |
 | GUI 能打字、游戏按键失效 | 无边框窗口没加 `WS_EX_NOACTIVATE`，点一下就抢焦点 | 建窗时补 `0x08000000` |
 | 部分怪一个技能都不放 | `_is_enemy` 写成 `目标类型 == 1`，而敌对带可驱散 buff 时是 2~10 | 判区间 `1 <= 目标类型 <= 10` |
-| 脱战时角色自己按技能 | 把「维持圣印」写成无 `战斗` 条件的兜底分支，脱战也每 30 秒按一次 | 维持类分支一律加 `战斗 and`，脱战不做任何操作 |
-| 面板显示队友血量变成「100s」 | 圣印剩余块落进了队伍块区间，两个 updater 抢同一像素 | 新块编号先算队伍块区间：`start=57`、`num=5` 时是 `58~207`，208 之后才安全 |
-| 以为「打字时会乱按键」要加守卫 | 只 grep 了 `Arasaka/` 就下结论——调度层 `logic_gui_Tools.py:585` 早就有 `if not sd.get("有效性"): continue` | 查横切逻辑要连调度层一起看；职业逻辑里重复判反而会漂移 |
+| 队友中毒/疾病了但不驱散 | `main.lua` 的 `dispelAbilities` 用的是**正式服法术 ID**，无限服是经典 ID，一个都对不上 → `hasLearnedAnySpell` 全 false → 驱散曲线点位被写成 0 → 队友的「驱散」像素恒为 0（**不报错，很难查**） | 能力表按服务器实际法术 ID 写；改完用 `/cy dispelprobe` 看点位是不是 0 |
+| 脱战时角色自己按技能 | 把「维持 buff」写成无 `战斗` 条件的兜底分支，脱战也每 30 秒按一次 | 维持类分支一律加 `战斗 and`，脱战不做任何操作 |
+| 面板显示队友血量变成「100s」 | 新增的计时块落进了队伍块区间，两个 updater 抢同一像素 | 新块编号先算队伍块区间：`start=57`、`num=5` 时是 `58~207`，**208 之后才安全** |
+| 以为「打字时会乱按键」要加守卫 | 只 grep 了 `Arasaka/` 就下结论——调度层 `logic_gui_Tools.py` 早就有 `if not sd.get("有效性"): continue` | 查横切逻辑要连调度层一起看；职业逻辑里重复判反而会漂移 |
+| 惩戒对着满血怪也放愤怒之锤 | 「目标生命值」像素从来没建过（`class/Paladin.lua` 缺块 + `config.yml` 缺字段）→ Python 读到恒 0 → `目标生命值 <= 20` 恒真 | 新增状态字段要**三处同步**：Lua 块定义 + `config.yml` 字段 + Python 读取；用 `check_integrity.py` 查断链 |
+| 加了职业后选人函数「不存在」 | 删「当前没调用」的代码时把 `Arasaka/utils.py` 的通用选择器一起删了 | 通用工具库不按「当前是否被调用」判断死活；加职业前先确认 `utils.py` 25 个函数齐全 |
 
 ### 17.7 加完功能的自检顺序
 
 ```bash
 # 1) Lua 语法（排除 Libs/）
-node -e "require('luaparse') 遍历并 parse 所有 *.lua"
+"D:/DevTools/lua54/lua-5.4.6/src/luac.exe" -p <每个 .lua 文件>
 
-# 2) fengari 行为测试（需自备 fengari + forever_harness.lua）
-HARNESS_DIR="<插件目录>" node run_lua.js forever_harness.lua
+# 2) Python + YAML 语法
+python -m py_compile <每个 .py 文件>
+python -c "import yaml; yaml.safe_load(open('Arasaka/config.yml',encoding='utf-8'))"
 
-# 3) 决策链路测试（需自备 paladin_forever_test.py）
-python paladin_forever_test.py
+# 3) 五维交叉校验（抓「像素↔config↔Python」断链）
+python .workbuddy/check_integrity.py
+
+# 4) 误删审计（把 git HEAD 的删除逐条对照「无限服 9 职业是否存在」判定）
+python .workbuddy/audit_wrong_deletion.py
 ```
 
-> 第 2、3 步的脚本是开发期验证工具，不随插件分发。
-> 只想确认改动没坏，进游戏打 `/cy spec` 和 `/cy gui` 看像素即可。
+> 只跑语法检查会漏掉「函数被吞并」「分支被挡死」「配置断链」这类结构性问题。
+> 只想确认改动没坏，进游戏打 `/cy spec`、`/cy gui`、`/cy dispelprobe` 看像素即可。
 
-全部通过再交付。只跑语法检查会漏掉「函数被吞并」「分支被挡死」这类结构性问题。
+全部通过再交付。
 
 ---
 

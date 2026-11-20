@@ -1,12 +1,11 @@
-## Interface: 16001, 120000, 120001, 120005
+## Interface: 16001
 
 ## Title: Cyber Deck|cFFC79C6E 赛博义肢|r
 ## Version: 0.1.0-forever
 ## Author: Netlaoer
 ## IconTexture: Interface\AddOns\Cyber_Deck\core\Spell_Misc_EmotionHappy.blp
 ## OptionalDeps: LibRangeCheck-3.0, Ace3
-## SavedVariables: CyberDeckADB, FuyutsuiADB
-## 注：FuyutsuiADB 是改名前（v0.1.0 之前）的存档名，仅为自动迁移保留，迁移逻辑见 core/core.lua:OnInitialize
+## SavedVariables: CyberDeckADB
 ## X-Embeds: Ace3
 
 ## Category-enUS: Combat
@@ -38,19 +37,15 @@ core/macro.lua
 core/keybinds.lua
 core/auras.lua
 
-class/Warrior.lua
 class/Paladin.lua
-class/Rogue.lua
+class/Warrior.lua
 class/Hunter.lua
+class/Rogue.lua
 class/Priest.lua
-class/DeathKnight.lua
 class/Shaman.lua
 class/Mage.lua
 class/Warlock.lua
-class/Monk.lua
 class/Druid.lua
-class/DemonHunter.lua
-class/Evoker.lua
 
 main.lua
 gui.lua

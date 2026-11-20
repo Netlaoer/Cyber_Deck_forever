@@ -59,7 +59,6 @@ def fetch(url, timeout=60):
 
 def get_spells_lua():
     manifest = json.loads(fetch(MANIFEST).decode("utf-8"))
-    build = (manifest.get("data") or {}).get("version", "?")
     entry = None
     for f in manifest["data"]["files"]:
         if f["path"] == "Data/Spells.lua":
@@ -83,7 +82,6 @@ def extract(src, class_name):
     start = src.find(class_name + "=")
     if start < 0:
         raise SystemExit("Spells.lua 里找不到职业 " + class_name)
-    end = src.find("}," , start)
     # 用下一个职业键作为边界更稳
     nxt = len(src)
     for m in re.finditer(r",([A-Z]+)=\{\{", src[start:]):
@@ -98,7 +96,7 @@ def extract(src, class_name):
 
 def main():
     classes = sys.argv[1:] or DEFAULT_CLASSES
-    src, data_version, entry = get_spells_lua()
+    src, data_version, _entry = get_spells_lua()
 
     # build 号从 Meta.lua 读（是 Lua 不是 JSON，用正则）
     build = "1.60.1.70862"
@@ -118,7 +116,7 @@ def main():
         parts.append("    -- %s：%d 条训练师技能（等级 1-60）\n" % (cls, len(rows)))
         parts.append("    %s = {\n" % cls)
         line = "       "
-        for idx, (level, sid, name, rank) in enumerate(rows, 1):
+        for level, sid, _name, _rank in rows:
             item = " {%d,%d}," % (level, sid)
             if len(line) + len(item) > 100:
                 parts.append(line + "\n")
@@ -132,6 +130,56 @@ def main():
     with io.open(OUT_PATH, "w", encoding="utf-8", newline="\n") as f:
         f.write("".join(parts))
     print("已写入 %s（%d 条，数据版本 %s）" % (OUT_PATH, total, data_version))
+
+    # 与本地客户端版本对比：服务器每次热修都会改客户端文件，离线表可能落后
+    local_build = guess_local_client_build()
+    if local_build and local_build != build:
+        print("  ⚠️ 本地客户端是 %s，数据源是 %s —— 数据可能落后，建议在游戏里 /cy spec 核对" % (local_build, build))
+    elif local_build:
+        print("  ✓ 与本地客户端版本一致（%s）" % build)
+
+
+def guess_local_client_build():
+    """从常见安装目录找 Wow.exe，读取文件版本号（找不到返回 None）"""
+    import glob
+    for pat in (
+        r"O:\World of Warcraft\_forever_\Wow.exe",
+        r"C:\Program Files (x86)\World of Warcraft\_classic_\Wow.exe",
+        r"C:\Program Files (x86)\World of Warcraft\_classic_beta_\Wow.exe",
+    ):
+        for path in glob.glob(pat):
+            v = read_pe_version(path)
+            if v:
+                return v
+    return None
+
+
+def read_pe_version(path):
+    """读 PE 的字符串版本信息（FileVersion），返回形如 1.60.1.70959。
+
+    注意：不能用 VS_FIXEDFILEINFO 的二进制位 —— 无限服客户端那里是
+    160.1.7095.9，和资源里的字符串版本 1.60.1.70959 不是一回事。
+    """
+    import ctypes
+    import re
+    try:
+        size = ctypes.windll.version.GetFileVersionInfoSizeW(path, None)
+        if not size:
+            return None
+        buf = ctypes.create_string_buffer(size)
+        if not ctypes.windll.version.GetFileVersionInfoW(path, 0, size, buf):
+            return None
+        raw = bytes(buf)
+        for key in ("FileVersion", "ProductVersion"):
+            needle = key.encode("utf-16le")
+            for m in re.finditer(re.escape(needle), raw):
+                txt = raw[m.end():m.end() + 120].decode("utf-16le", "ignore")
+                mm = re.search(r"(\d+(?:\.\d+)+)", txt)
+                if mm:
+                    return mm.group(1)
+        return None
+    except Exception:
+        return None
 
 
 if __name__ == "__main__":
