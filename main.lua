@@ -243,305 +243,6 @@ local function pickTypeByCurve(unit, ids, curve)
     return nil
 end
 
--- 受限时读负面光环列表 —— 多条 API 路径轮流试。
--- 无限服（FOREVER）在战斗中会禁掉一部分光环 API（Decursive 的 AurasRestricted
--- 就是这个意思），但不一定全禁 —— 只要有一条能读出「有几个」，
--- 就能避免「队友没减益还一直按驱散」。
--- 返回 (instanceID 列表, 路径名, 数量)
-
--- ================================================================
--- AuraContainer 驱散探测（受限时的精确判定）
---
--- 无限服 = Decursive 里的 DC.FOREVER：战斗中光环 API 读不到明细。
--- Decursive 的做法（见 Dcr_DebuffsFrame.lua）是创建 AuraContainer 原生 UI 组件，
--- 把 candidateFilters.includeDispelTypes 交给**客户端**去匹配，
--- 由客户端填充槽位 —— 插件全程不读光环明细，受限也能用。
---
--- ⚠️ **AuraButton 是受保护对象**：
---   "AuraButtons become inaccessible to addon code while auras are secret."
---   插件不能对它调任何方法（IsVisible / GetPoint 都会报 forbidden object）。
---   但 Blizzard 的 initializeFrame 回调**执行时 button 是可访问的**（Decursive 就在
---   回调里 SetPoint / EnableMouse / ClearDispelTypeTextures）。
---   所以本插件用「回调有没有被触发」当作「这个 slot 有没有内容」的信号，
---   **完全不碰 button 对象**。
---
--- 机制：
---   10 个隐藏容器，每个 4 个 slot（Magic / Curse / Disease / Poison）
---   每轮 SetUnit 一个单位 -> 客户端在之后的帧里填充 slot -> 触发对应 slot 的
---   initializeFrame 回调 -> 记下「该类型有内容」-> 下一轮结算
--- ================================================================
-
-
-local function dt2_safeStr(v)
-    local ok, s = pcall(tostring, v)
-    if not ok then return "|cffff0000读取报错|r" end
-    return s
-end
-
-
--- ================================================================
--- 驱散探测实验 3（v3）：includeSpellIDs 身份门 vs includeDispelTypes 类型过滤
---
--- 目的：脱战时 slot 全空，但玩家身上确实有 Disease debuff。
---       需要分清「类型过滤不生效」还是「slot 判定方式不对」。
---
--- 用法：/cy dispeltest3   （约 3 秒后出结果）
--- ================================================================
-local DT3 = {
-    slots = {},
-    cbCount = {},
-    round = 0,
-}
-
-local function dt3_safeStr(v)
-    local ok, s = pcall(tostring, v)
-    if not ok then return "|cffff0000读取报错|r" end
-    return s
-end
-
--- 读一个 frame 的「有没有内容」信号（全部 pcall，受限下不炸）
-local function dt3_probe(fr, label)
-    if not fr then return (label .. "=nil") end
-    local out = {}
-    local okV, vis = pcall(fr.IsVisible, fr)
-    out[#out + 1] = (label .. "vis=") .. ((okV and tostring(vis)) or "|cffff0000读不了|r")
-    if type(fr.GetChildren) == "function" then
-        local okN, kids = pcall(fr.GetChildren, fr)
-        if okN and type(kids) == "table" then
-            out[#out + 1] = (label .. "子=") .. tostring(#kids)
-        else
-            out[#out + 1] = (label .. "子=读不了")
-        end
-    end
-    if type(fr.IsShown) == "function" then
-        local okS, sh = pcall(fr.IsShown, fr)
-        out[#out + 1] = (label .. "shown=") .. ((okS and tostring(sh)) or "|cffff0000读不了|r")
-    end
-    return table.concat(out, " ")
-end
-
-
--- ================================================================
--- 驱散探测实验 4（v4）
---
--- A. Enum.SecrecyLevel：逐法术查光环保密等级
---    NeverSecret 的光环任何时候都可读 -> 战斗中可直接读该 debuff
--- B. bar 挂在 container 下（不在 button 子树）-> 也许可读
---
--- 用法：/cy dispeltest4
--- ================================================================
-local DT4 = { slots = {}, cbCount = {} }
-
-local function dt4_access(v)
-    if v == nil then return "nil" end
-    if type(_G.canaccessvalue) == "function" then
-        local ok, r = pcall(_G.canaccessvalue, v)
-        if ok then return r and "可读" or "secret" end
-    end
-    if type(_G.issecretvalue) == "function" then
-        local ok, r = pcall(_G.issecretvalue, v)
-        if ok and r then return "secret" end
-    end
-    return "可读"
-end
-
-local function dt4_safeStr(v)
-    local ok, s = pcall(tostring, v)
-    if not ok then return "|cffff0000读取报错|r" end
-    return s
-end
-
--- 经典 debuff 候选（无限服 1.60.1 的经典法术 ID）
-local DT4_DEBUFFS = {
-    3427, 137, 139, 112, 122, 171, 514, 113, 674, 125, 5508, 7288,
-    2874, 3598, 2559, 1243, 2691, 3366, 4458, 118, 120, 324, 325,
-}
-
-
--- ================================================================
--- 驱散探测实验 5（v5）：视觉通道
---
--- 前面所有 Lua 侧读取通道在战斗中全被拒：
---   * 光环 API -> 抛 secret 错误
---   * AuraContainer slot -> 读不了
---   * bar 数值 / OnValueChanged -> 读不了
---   * bar 挂 button 子树外 -> 引擎直接拒（owner 是 button）
---   * CLEU -> 无事件
---   * NeverSecret -> 没有候选（全是 ContextuallySecret）
---
--- 剩下唯一没试过的闭环：**引擎画 -> Python 截屏读**。
--- 截屏读的是屏幕像素，不经过 Lua 对象，所以不受 secret / forbidden 限制。
---
--- 本实验验证最基础的一环：把容器放到屏幕可见位置，
--- 用纯色 StatusBar 当「探针灯」——有 debuff 时引擎填满，无 debuff 时空。
---
--- 用法：/cy dispeltest5
---   之后用 Python 探针脚本读屏幕那块区域。
--- ================================================================
-local DT5 = {
-    slots = {},
-    cbCount = {},
-    -- 探针区在屏幕上的位置（供 Python 读取）
-    PROBE_X = 300,
-    PROBE_Y = 60,
-    PROBE_W = 24,
-    PROBE_H = 16,
-    PROBE_GAP = 4,
-}
-
--- ================================================================
--- 驱散探测实验 6（v6）：按 spellID / 名字精确查询（EUI 模式）
---
--- 核心假设（来自客户端自带 EUI，EUI_AuraBuffReminders_Auras.lua:500）：
---   「按名字/ID 查询」的 API 在受限下**返回 secret table 而不是抛错**。
---   => 返回**非 nil**（哪怕 issecretvalue）= 该单位有这个 debuff。
---
--- 这与索引型 API（GetAuraDataByIndex）不同 —— 后者在受限下直接抛错。
--- ================================================================
-local DT6 = {
-    unitAuraUnits = {},
-    count = 0,
-}
-
--- 探针：查一个单位有没有某个 debuff
--- 返回 "命中" / "无" / "未知(受限)" / "抛错"
--- ================================================================
--- 驱散探测实验 7（v7）
---
--- 前面 v1~v6 已排除的通道：
---   索引型光环 API（抛错）/ 按 ID·名字查询（返回 nil，被扣留）
---   AuraContainer slot 读取（forbidden）/ SetApplicationBar 数值（forbidden）
---   OnValueChanged（不触发）/ bar 挂子树外（引擎拒）
---   CLEU（无事件）/ NeverSecret（无候选）
---
--- v7 只测两条**还没测过**的路：
---   B. UNIT_AURA 的 payload —— info 本身显示「可读」，
---      但没人深挖过它的字段（addedAuras / removedAuras / isFullUpdate）
---   D. 剩余 API 变体 —— AuraUtil.FindAura / ForEachAura /
---      GetAuraDataBySpellName 的各种 filter / GetAuraDataByAuraInstanceID
---   E. AuraContainer 的 initializeFrame 回调**次数**——
---      回调是我们自己的 Lua 函数，**受限下依然能被调用**，
---      所以「回调次数有没有 +1」是个不受限的可读信号。
--- ================================================================
-
-local DT7 = { eventCount = 0, dumped = 0, cbLog = {}, cbCount = {} }
-
-local function dt7_access(v)
-    if v == nil then return "nil" end
-    if type(_G.canaccessvalue) == "function" then
-        local ok, r = pcall(_G.canaccessvalue, v)
-        if ok then return r and "可读" or "secret" end
-    end
-    if type(_G.issecretvalue) == "function" then
-        local ok, r = pcall(_G.issecretvalue, v)
-        if ok and r then return "secret" end
-    end
-    return "可读"
-end
-
-local function dt7_val(v)
-    if v == nil then return "nil" end
-    local t = type(v)
-    if t == "string" or t == "number" or t == "boolean" then return tostring(v) end
-    local ok, s = pcall(tostring, v)
-    return ok and tostring(s) or "?"
-end
-
--- 读一个字段（可能抛错 / 可能是 secret 值）
-local function dt7_field(tbl, key)
-    if type(tbl) ~= "table" then return nil end
-    local ok, v = pcall(function() return tbl[key] end)
-    if not ok then return nil end
-    return v
-end
-
--- 打印一个 aura 对象的字段可读性
-local function dt7_dumpAura(a, label)
-    local out = {}
-    out[#out + 1] = ("%s  type=%s  access=%s"):format(label, type(a), dt7_access(a))
-    if type(a) == "table" then
-        for _, f in ipairs({
-            "spellId", "isHarmful", "dispelName", "name",
-            "auraInstanceID", "sourceUnit", "applications",
-        }) do
-            local v = dt7_field(a, f)
-            out[#out + 1] = ("      %-14s = %-22s (%s)"):format(
-                f, dt7_val(v), dt7_access(v))
-        end
-    end
-    return table.concat(out, "\n")
-end
-
--- 展开一个 aura 列表（addedAuras / removedAuras）
-local function dt7_dumpAuraList(lst, label)
-    local out = {}
-    out[#out + 1] = ("%s  type=%s  access=%s"):format(
-        label, type(lst), dt7_access(lst))
-    if type(lst) == "table" then
-        local n = 0
-        for _, a in pairs(lst) do
-            n = n + 1
-            if n <= 3 then
-                out[#out + 1] = dt7_dumpAura(a, ("      [%d]"):format(n))
-            end
-        end
-        out[#out + 1] = ("      条数=%d"):format(n)
-    end
-    return table.concat(out, "\n")
-end
-
-
-
--- ================================================================
--- 驱散探测实验 8（v8）：视觉通道
---
--- v1~v7 已确认的事实：
---   受限（战斗中）时，**所有** Lua 侧光环读取路都断了 ——
---   索引型 API 抛 secret 错误 / 按 ID·名字查询返回 nil（被扣留）/
---   UNIT_AURA 的 payload 字段全是 secret / AuraContainer 的 slot 与
---   StatusBar 都读不了（forbidden）/ initializeFrame 回调只在创建时触发一次，
---   不是内容信号 / NeverSecret 无候选 / 无 tooltip 类光环 API。
---
--- 剩下唯一一条路：**让引擎把答案画到屏幕上，Python 截屏读**。
--- 截屏读的是屏幕像素，不经过 Lua 对象，不受 secret / forbidden 限制。
---
--- 探针原理（EllesmereUI_WarriorCharges.lua 的做法）：
---   引擎把 aura 的真实层数 C 侧写进 slot 里的 StatusBar，
---   我们给 bar 染上特征色 —— bar 被填满 = 该类型有 debuff。
---
--- 用法：/cy dispeltest8      然后跑 python Arasaka/probe_dispel.py
---       （或者直接截图这块区域，我直接看颜色）
--- ================================================================
-
-local DT8 = {
-    CELL = 40,      -- 探针格边长（像素）
-    GAP = 6,        -- 格间距
-    COLS = 4,       -- 每行几格
-    X0 = 300,       -- 探针区左上角（客户端坐标）
-    Y0 = 120,
-    barErr = {},
-    cbCount = {},
-}
-
--- 8 个探针：4 种驱散类型 + 3 个对照 + 1 个队友
-local DT8_PROBES = {
-    { label = "魔法",     color = { 1, 0, 0 },     unit = "player", filter = { includeDispelTypes = { Magic = true } } },
-    { label = "诅咒",     color = { 1, 0.5, 0 },   unit = "player", filter = { includeDispelTypes = { Curse = true } } },
-    { label = "疾病",     color = { 0, 1, 0 },     unit = "player", filter = { includeDispelTypes = { Disease = true } } },
-    { label = "中毒",     color = { 0, 0.4, 1 },   unit = "player", filter = { includeDispelTypes = { Poison = true } } },
-    { label = "任意负面", color = { 1, 1, 1 },     unit = "player", filter = {} },
-    { label = "ID3427",   color = { 1, 1, 0 },     unit = "player", filter = { includeSpellIDs = { [3427] = true } } },
-    { label = "任意增益", color = { 0, 1, 1 },     unit = "player", filter = {}, helpful = true },
-    { label = "队友负面", color = { 1, 0, 1 },     unit = "party1", filter = {} },
-}
-
-
--- 读一个容器各 slot 的结果：{ [type] = 有没有内容 }（type 5 = 对照组）
-
--- 每轮推进探测：结算上一轮结果 + 派发新一轮
-
--- 取某个单位「有可驱散减益」的类型（按 魔法 > 诅咒 > 疾病 > 中毒 优先级）
-
 -- ================================================================
 -- 引擎染色驱散探针（受限下的唯一通道）
 --
@@ -695,38 +396,60 @@ function CyberDeck:PrintDispelProbe()
         local p = dispelProbeUnits[idx]
         if p then
             n = n + 1
-            print(("    槽位%-2d unit=%-10s 色条格=%-4d AddAuraSlot=%s"):format(
+            local luaType = "?"
+            if p.unit and self.GetDispelType then
+                local okT, t, st = pcall(self.GetDispelType, self, p.unit)
+                if not okT then
+                    luaType = "异常:" .. tostring(t)
+                elseif st == "受限" then
+                    luaType = "|cffff0000读不到(受限)|r"
+                elseif t then
+                    luaType = "|cff00ff00类型" .. tostring(t) .. "|r"
+                else
+                    luaType = "|cffff8888没有可驱减益|r"
+                end
+            end
+            print(("    槽位%-2d unit=%-10s 色条格=%-4d AddAuraSlot=%-4s Lua读到=%s"):format(
                 idx, tostring(p.unit), p.cell,
-                p.ok and "成功" or ("失败: " .. tostring(p.err))))
+                p.ok and "成功" or ("失败:" .. tostring(p.err)), tostring(luaType)))
         end
     end
     print(("  共 %d 个探针"):format(n))
 end
 
--- 取单位身上「玩家可驱散」的减益类型编号；没有可驱的返回 nil
+-- 供诊断调用：取单位身上「玩家可驱散」的减益类型编号
+function CyberDeck:GetDispelType(unit)
+    return readDispelType(unit)
+end
+
+-- 取单位身上「玩家可驱散」的减益类型编号
 --
 -- ⚠️ 这就是**正式服那一条路**（在正式服它是唯一的一条路）：
 --   读光环 -> 曲线求值 -> 拿到类型号 t -> CreatTexture(格索引, t/255)
--- 无限服战斗中光环被 secret 化，这一步会失败（返回 nil），
--- 那时**由引擎把类型直接染到色条那一格上**（见上面的引擎染色探针），
--- Python 读到的还是同一个格子、同一套编码。
+-- 无限服战斗中光环被 secret 化，这一步读不到。
+--
+-- 返回 (类型, 状态)：
+--   (nil,  "ok")    -> 确实没有可驱减益
+--   (nil,  "受限")  -> **读不到**（光环被 secret 化）——和「没有」是两回事！
+--   (t,    "ok")    -> 有可驱减益，类型 t
+--
+-- 「读不到」必须和「没有」分开：受限时**不能往那一格写 0**，
+-- 否则会盖掉引擎染上去的正确值（引擎染色见 UpdateDispelProbeUnit）。
 local function readDispelType(unit)
     local ids = CyberDeck:GetAuraInstanceIDs(unit, "HARMFUL|RAID_PLAYER_DISPELLABLE", 40)
-    if ids and #ids > 0 then
-        local b = pickTypeByCurve(unit, ids, dispelCurve)
-        if b then
-            local t = math.floor(b * 255 + 0.5)
-            if t > 0 and t < 10 then return t end
-        end
-        -- 读得到光环但类型算不出来 -> 类型未知
-        return DISPEL_TYPE_UNKNOWN
+    if ids == nil then
+        return nil, "受限"
     end
-    -- 读不到（受限）：交给引擎染色；如果引擎也没给出，
-    -- 只有开了「战斗中宁可空放也要驱」开关才写 5（未知）
-    if blindDispelEnabled() then
-        return DISPEL_TYPE_UNKNOWN
+    if #ids == 0 then
+        return nil, "ok"
     end
-    return nil
+    local b = pickTypeByCurve(unit, ids, dispelCurve)
+    if b then
+        local t = math.floor(b * 255 + 0.5)
+        if t > 0 and t < 10 then return t, "ok" end
+    end
+    -- 读得到光环但类型算不出来 -> 类型未知
+    return DISPEL_TYPE_UNKNOWN, "ok"
 end
 
 local function updateCooldownSpellKnown()
@@ -1273,7 +996,16 @@ end
 
 function CyberDeck:updatePlayerSpecInfo()
     self:clearAllTextures()
-    self.state.specIndex = self:GetActiveSpecIndex()
+    local newSpecIndex = self:GetActiveSpecIndex()
+    -- 换专精：把上一套专精建的计数条清掉重建。
+    -- 正式服在施法 384255 / 200749（切天赋/切专精）时做同一件事，
+    -- 无限服没有那两个法术，改天赋走 PLAYER_TALENT_UPDATE，所以在这里补。
+    -- 必须在 loadPlayerBlocks 之前清：CreateAutoLayoutBar 开头有
+    -- 「spellIdToBar 已有就复用」的复检，不先清会命中旧映射，条不会重建。
+    if self.state.specIndex and self.state.specIndex ~= newSpecIndex then
+        self:ClearAllCyberDeckBars()
+    end
+    self.state.specIndex = newSpecIndex
     local info = self:GetForeverSpecInfo(self.state.specIndex)
     self.state.specID = info.id
     self.state.specName = info.name
@@ -2061,21 +1793,17 @@ local function getAuraDispelTypeColor(unit)
     local obj = group[unit]
     if not blocks.groups or not obj then return end
     local index = blocks.groups.start + (obj.index - 1) * blocks.groups.num + blocks.groups.dispel
-    local t = readDispelType(unit)
-    if t then
-        CyberDeck:CreatTexture(index, t / 255)
-    else
-        CyberDeck:CreatTexture(index, 0)
-    end
-end
-
-function CyberDeck:clearGroupBlocks()
-    if blocks.groups and blocks.groups.start then
-        local startIndex = blocks.groups.start
-        for index = startIndex, 255 do
-            self:CreatTexture(index, 0)
+    local t, st = readDispelType(unit)
+    if st == "受限" then
+        -- 读不到（战斗中光环被 secret 化）：**不写这一格**。
+        -- 引擎会把 debuff 类型直接染到这一格上，写 0 会盖掉它。
+        -- 只有开了「战斗中宁可空放也要驱」开关才写 5（未知）走盲驱。
+        if blindDispelEnabled() then
+            CyberDeck:CreatTexture(index, DISPEL_TYPE_UNKNOWN / 255)
         end
+        return
     end
+    CyberDeck:CreatTexture(index, t and t / 255 or 0)
 end
 
 function CyberDeck:updateGroup()

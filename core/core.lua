@@ -366,7 +366,6 @@ function CyberDeck:SlashCommand(input, editbox)
         print("探测当前上下文的 secret 限制: /cy secrets")
         print("探测驱散能力/曲线点位: /cy dispelprobe")
         print("驱散链路逐环诊断: /cy dispelscan")
-        print("驱散探测实验(一次性定性): /cy dispeltest")
         print("引擎染色驱散探针状态: /cy dispelpix")
         print("像素块调试界面: /cy gui")
         print("本命令列表: /cy help")
@@ -481,8 +480,6 @@ CyberDeck.defaults = {
         potion = 0,
         dispel = 1,
         blindDispel = 0,      -- 战斗中读不到减益信息时是否盲驱（0=不空放，1=宁可空放也要驱）
-        -- debuff spellID -> 驱散类型（1魔法 2诅咒 3疾病 4中毒），脱战时自动学习并累积
-        dispelSpellTypes = {},
         quickButtonCX = 180,
         quickButtonCY = -100,
         quickButtonShow = true,

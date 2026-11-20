@@ -67,15 +67,70 @@ def main():
     # --- 2) group ---
     print("\n[2] group（每个队友 3 格：生命值 / 职责 / 驱散）")
     group = sd.get("group") or {}
+    # 从 config.yml 算出每个槽位的色条格号（和 Lua 侧 /cy dispelpix 对照用）
+    cell_of = {}
+    try:
+        from GetPixels import _get_spec_config, load_config
+        cfg2 = load_config()
+        sc = _get_spec_config(cfg2, class_id, spec_id) or {}
+        g = sc.get("group") or {}
+        st, num = g.get("start"), g.get("num")
+        if st and num:
+            for i in range(1, 11):
+                cell_of[i] = st + (i - 1) * num + 3
+    except Exception as e:
+        print("  （算格号失败：%s）" % e)
     for i in range(1, 11):
         d = group.get(str(i))
         if not d:
             continue
-        print("  槽位%-2d 生命值=%-4s 职责=%-4s 驱散=%s" % (
-            i, d.get("生命值"), d.get("职责"), d.get("驱散")))
+        cell = cell_of.get(i)
+        print("  槽位%-2d 色条格=%-5s 生命值=%-4s 职责=%-4s 驱散=%s" % (
+            i, cell if cell else "?", d.get("生命值"), d.get("职责"), d.get("驱散")))
     nz = [(k, v.get("驱散")) for k, v in group.items()
           if v.get("驱散") not in (0, None)]
     print("  >> 有驱散标记的槽位：%s" % (nz if nz else "（无）"))
+
+    # --- 2b) 原始像素：把「驱散」格里的每个像素列出来 ---
+    #     这一格可能有**两个纹理重叠**（Lua 写的格子 + 引擎染色的格子），
+    #     Python 逐像素扫描、后者覆盖前者 —— 有亚像素错位就会时对时错。
+    try:
+        import ctypes
+        from ctypes import wintypes
+        import mss
+        hwnd = ctypes.windll.user32.FindWindowW(None, "魔兽世界")
+        ctypes.windll.user32.SetProcessDPIAware()
+        pt = wintypes.POINT(0, 0)
+        ctypes.windll.user32.ClientToScreen(hwnd, ctypes.byref(pt))
+        rect = wintypes.RECT()
+        ctypes.windll.user32.GetClientRect(hwnd, ctypes.byref(rect))
+        width = rect.right - rect.left
+        # 色条：255 格，每格 width/255 像素
+        bw = width / 255.0
+        with mss.mss() as sct:
+            img = sct.grab({"top": pt.y, "left": pt.x, "width": width, "height": 2})
+        raw = img.raw
+        w = img.width
+        print("\n[2b] 原始像素（行0，行1）—— 看「驱散」格里到底有几个颜色")
+        for i in (1, 2, 3):
+            cell = cell_of.get(i)
+            if not cell:
+                continue
+            x0 = int(round((cell - 1) * bw))
+            x1 = int(round(cell * bw))
+            for row in (0, 1):
+                seen = []
+                for x in range(x0, min(x1, w)):
+                    off = (row * w + x) * 4
+                    b, g, r = raw[off], raw[off + 1], raw[off + 2]
+                    col = (r, g, b)
+                    if col not in seen:
+                        seen.append(col)
+                print("  槽位%-2d 格%-4d x=%d..%d 行%d 颜色=%s" % (
+                    i, cell, x0, x1 - 1, row,
+                    " ".join("(%d,%d,%d)" % c for c in seen)))
+    except Exception as e:
+        print("  （读原始像素失败：%s）" % e)
 
     # --- 3) 驱散技能的 CD ---
     key, fn = _load_logic(class_id)

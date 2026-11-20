@@ -38,7 +38,7 @@ AI_INSTRUCTION（AI 必读）：
 - **9 个职业**：战士/圣骑/猎人/盗贼/牧师/萨满/法师/术士/德鲁伊，各有独立的像素布局与决策逻辑
 - **零侵入操作**：`PostMessage` 后台发键，不抢焦点，可以边挂机边打字
 - **热重载**：改完 Python 逻辑点一下 GUI「重载」即可，不用重启进程
-- **可观测**：`/cy gui` 看像素原始值、`/cy spec` 看专精/技能解析、`/cy auraprobe` 探测哪些光环字段被 secret 保护、`/cy dispelprobe` 看驱散点位、`/cy dispelscan` 逐环诊断驱散链路
+- **可观测**：`/cy gui` 看像素原始值、`/cy spec` 看专精/技能解析、`/cy auraprobe` 探测哪些光环字段被 secret 保护、`/cy dispelprobe` 看驱散点位、`/cy dispelscan` 逐环诊断驱散链路、`/cy dispelpix` 看引擎染色探针状态
 
 ### 快速开始
 
@@ -105,14 +105,16 @@ Cyber_Deck/
 ├── main.lua                # 事件处理函数 + OnUpdate 帧循环
 ├── gui.lua                 # Ace3 配置界面（/cy gui 像素块调试）
 │
-├── Progress/               # 各职业的专属实现文档
-│   └── paladin.md          # 圣骑士：像素索引/驱散能力表/专精判定/圣印机制/决策优先级
+├── Progress/               # 各职业的专属实现文档（9 份）
+│   ├── paladin.md          # 圣骑士：像素索引/驱散能力表/专精判定/圣印机制/决策优先级
+│   └── (warrior/hunter/rogue/priest/shaman/mage/warlock/druid).md
 │
 ├── Arasaka/                # Python 决策层
 │   ├── config.yml          # 像素块配置（按职业ID分段：1战士 2圣骑 3猎人 4盗贼 5牧师
 │   │                       #   7萨满 8法师 9术士 11德鲁伊）
 │   ├── utils.py            # 核心工具库（配置加载、按键发送、单位选择器）
 │   ├── GetPixels.py        # 屏幕像素扫描引擎（mss 截图 + RGB 解码）
+│   ├── check_dispel.py     # 驱散一键诊断（读真实像素 + 实跑决策层，不在生产路径上）
 │   ├── class/              # 职业逻辑模块（9 个职业各一个）
 │   │   ├── __init__.py
 │   │   ├── paladin_logic.py   # 圣骑士（神圣/防护/惩戒三系，已完整验证）
@@ -264,6 +266,7 @@ char = { level, aoeMode, cooldowns, dpsMode, delay, potion,
 | `/cy auraprobe` / `ap` | 探测哪些光环字段被 secret 保护 |
 | `/cy dispelprobe` | 打印 4 种驱散类型的命中法术、曲线点位、各单位可驱散减益条数 |
 | `/cy dispelscan`（`/cy ds`） | **驱散链路逐环诊断**：受限状态 / 玩家能驱的类型 / 每个 debuff 的 spellId 与 dispelName / 曲线求值 / 驱散像素索引 |
+| `/cy dispelpix`（`/cy dpx`） | **引擎染色探针状态**：每个队友占色条第几格、容器建起来没 |
 | `/cy options` / `config` | 打开 Ace3 选项界面 |
 | `/cy message <文本>` | 聊天框测试 |
 | `/cy help` | 打印帮助信息 |
@@ -1051,26 +1054,42 @@ python .workbuddy/check_readme.py               # 文档与代码一致
 -- main.lua
 local function readDispelType(unit)
     local ids = CyberDeck:GetAuraInstanceIDs(unit, "HARMFUL|RAID_PLAYER_DISPELLABLE", 40)
-    if ids and #ids > 0 then
-        local b = pickTypeByCurve(unit, ids, dispelCurve)   -- 曲线求值
-        if b then
-            local t = math.floor(b * 255 + 0.5)            -- 蓝通道 = 类型号
-            if t > 0 and t < 10 then return t end
-        end
-        return DISPEL_TYPE_UNKNOWN
+    if ids == nil then
+        return nil, "受限"          -- 读不到（光环被 secret 化）
     end
-    return nil
+    if #ids == 0 then
+        return nil, "ok"             -- 确实没有可驱减益
+    end
+    local b = pickTypeByCurve(unit, ids, dispelCurve)   -- 曲线求值
+    if b then
+        local t = math.floor(b * 255 + 0.5)            -- 蓝通道 = 类型号
+        if t > 0 and t < 10 then return t, "ok" end
+    end
+    return DISPEL_TYPE_UNKNOWN, "ok"   -- 读得到光环但类型算不出来 -> 类型未知
 end
 
 local function getAuraDispelTypeColor(unit)
     local index = blocks.groups.start + (obj.index - 1) * blocks.groups.num + blocks.groups.dispel
-    local t = readDispelType(unit)
+    local t, st = readDispelType(unit)
+    if st == "受限" then
+        -- 读不到（战斗中光环被 secret 化）：**不写这一格**。
+        -- 引擎会把 debuff 类型直接染到这一格上，写 0 会盖掉它。
+        if blindDispelEnabled() then
+            CyberDeck:CreatTexture(index, DISPEL_TYPE_UNKNOWN / 255)
+        end
+        return
+    end
     CyberDeck:CreatTexture(index, t and t / 255 or 0)
 end
 ```
 
 色条第 i 格的编码是 `(0, i/255, value)` —— **绿=索引、蓝=值、红=0**，
 Python 侧 `row_data[g] = b` 直接读走。
+
+> ⚠️ **「读不到」必须和「没有」分开**：
+> 受限时**不能往那一格写 0**，否则会盖掉引擎染上去的正确值。
+> 早期版本 `readDispelType` 用 nil 同时表示两种情况，导致战斗中驱散时好时坏
+> （2026-11-21 踩过）。
 
 ### 唯一的问题：无限服在战斗中把光环 secret 化
 
@@ -1263,7 +1282,7 @@ D:/DevTools/pyenv-re313/Scripts/python.exe Arasaka/check_dispel.py
 | 找低血队友 / 缺 buff 队友 / 驱散目标 | 25 个 `get_*` / `count_*` 选择器 | `Arasaka/utils.py` |
 | 热键查找与发送 | `get_hotkey()` + `send_key_to_wow()` | `Arasaka/utils.py` |
 | 像素 → state_dict | `build_state_dict()`（含 spells 子字典、group 展开） | `Arasaka/GetPixels.py` |
-| 光环受限（战斗中）降级 | `aurasRestricted()` → 类型写 5 → Python 盲驱第一个队友 | `main.lua` + 各职业 `_logic.py` |
+| 光环受限（战斗中） | **引擎按 debuff 类型给色条「驱散」格染色**（Decursive 同款）→ Python 照旧从色条读，拿到精确类型 | `main.lua` 的 `UpdateDispelProbeUnit` |
 | 决策层热重载 | `reload_logic_modules()` | `logic_gui_Tools.py` |
 | 宏体创建 | `loadPlayerMacros()` → `CreateMacro()`（进入世界时一次，无手动命令） | `core/macro.lua` |
 
@@ -1300,6 +1319,11 @@ D:/DevTools/pyenv-re313/Scripts/python.exe Arasaka/check_dispel.py
 | 零售机制像素（蓄力 / 蓄力层数 / 一键辅助 / 英雄天赋 / 首领战 / 难度） | **已删除**。无限服没有这些机制，且部分与其它字段撞像素（如 `蓄力` 与 `生命值` 都占 9 号） |
 | 各职业的 200~211 索引 | 已删（WLK/TBC/11.x 技能，无限服 60 级技能组不提供） |
 | `staticSpells` 的 `/` 前缀判断 | **已回滚**。`staticSpells` 一律拼 `/cast`，完整宏体只能放 `specialSpells` |
+| `main.lua` 的驱散探测实验脚手架（`DT2`~`DT8` / `dt*_safeStr` / `dt3_probe` / `dt4_access` / `dt7_*` / `DT8_PROBES`） | **已删除**（2026-11-21）。8 轮实验的结论已固化进生产路径，代码本身零引用 |
+| `core/forever.lua` 的 debuff 学习表（`dispelTypeFromName` / `LearnDebuffTypes` / `QueryDispelBySpellTable`）+ `db.char.dispelSpellTypes` | **已删除**。「脱战学表→战斗查表」实测走不通（受限时按 ID 查询返回 nil，无法区分命中与读不到），已被引擎染色路径取代 |
+| `main.lua` 的 `clearGroupBlocks` | **已删除**（2026-11-21）。队伍块清零已由 `updateGroup` 重建 + Python 端 `_role_not_zero` 过滤覆盖 |
+| `core/core.lua` help 里的 `/cy dispeltest` | **已删除**。该命令分支从来就不存在（只有 `dispelprobe` / `dispelscan` / `dispelpix`） |
+| `core/block.lua` 的 `ClearAllCyberDeckBars` | **保留并已接上调用点**（2026-11-21）。换专精时清掉上一套专精建的计数条，见下方说明 |
 
 > ⚠️ **删「当前没调用」的代码前先分类**：
 > - **通用件**（跨职业可复用、其它职业将来会用到）→ **保留**
@@ -1310,6 +1334,41 @@ D:/DevTools/pyenv-re313/Scripts/python.exe Arasaka/check_dispel.py
 >   例：酒池（武僧）、符文（死骑）、疾病判断（死骑）、防御光环（恶魔猎手）
 > - **零售机制件** → 可删
 > - **判不准的一律保留**：留着不花钱，删了要重写 |
+>
+> ⚠️ **「移植时漏了调用点」≠「这个函数多余」**：
+> 正式服靠**施法 384255 / 200749**（切天赋 / 切专精）触发 `ClearAllFuyutsuiBars()`，
+> 无限服没有这两个法术，改天赋走 `PLAYER_TALENT_UPDATE` —— **调用点得自己补**，
+> 不能因为「无限服没有那个施法」就把函数删掉。
+> 补法见 `main.lua` 的 `updatePlayerSpecInfo()`：专精索引变了就清一次。
+
+### 17.5.1 切专精要重建计数条（`ClearAllCyberDeckBars`）
+
+无限服 1.60.1 = TBC 2.4.3，**有双天赋系统**（每职业两棵树）。切换后像素块配置要整套换，
+`CreateAutoLayoutBar` 建出来的计数条也必须重建，否则残留上一套专精的旧条。
+
+```lua
+-- main.lua: updatePlayerSpecInfo()
+local newSpecIndex = self:GetActiveSpecIndex()
+-- 换专精：把上一套专精建的计数条清掉重建。
+-- 正式服在施法 384255 / 200749 时做同一件事，
+-- 无限服没有那两个法术，改天赋走 PLAYER_TALENT_UPDATE，所以在这里补。
+-- 必须在 loadPlayerBlocks 之前清：CreateAutoLayoutBar 开头有
+-- 「spellIdToBar 已有就复用」的复检，不先清会命中旧映射，条不会重建。
+if self.state.specIndex and self.state.specIndex ~= newSpecIndex then
+    self:ClearAllCyberDeckBars()
+end
+self.state.specIndex = newSpecIndex
+```
+
+两个要点：
+- **必须在 `loadPlayerBlocks` 之前清** —— `CreateAutoLayoutBar` 开头有
+  `if spellIdToBar[spellId] then return spellIdToBar[spellId] end` 复检，
+  不先清会命中旧映射，新专精的条根本不会重建。
+- **只在专精真的变了时才清** —— `PLAYER_TALENT_UPDATE` 每次加天赋点都会触发，
+  无条件清会导致频繁重建。
+
+> 当前 9 个职业的 `class/*.lua` 里 `countBars` 配置数都是 0（正式服有 6 个职业配了 17 条），
+> 所以这条路径暂时走不到实际效果；但调用点已就位，将来配了 countBars 就能正确重建。
 
 ### 17.6 重复造轮子的真实代价（本仓库踩过的坑）
 
@@ -1350,6 +1409,27 @@ python .workbuddy/audit_wrong_deletion.py
 > 只想确认改动没坏，进游戏打 `/cy spec`、`/cy gui`、`/cy dispelprobe` 看像素即可。
 
 全部通过再交付。
+
+### 17.8 与正式服的结构差异清单（2026-11-21 全量审查）
+
+对照 `C:\Users\laoer\Desktop\Cyber_Deck-bak`（正式服）逐文件审查的结果。
+**结论：无限服相对正式服没有功能缺失** —— 正式服独有的东西全部是零售专属机制。
+
+| 差异 | 正式服 | 无限服 | 判定 |
+|------|--------|--------|------|
+| 职业数 | 13（多死骑/恶魔猎手/武僧/唤魔师） | 9（TBC 2.4.3） | 正常 |
+| 通用机制块 | 专精/引导/战斗/施法/有效性/法术失败/生命值/目标类型/移动/职业/能量值/锚点/队伍人数/队伍类型 | **完全一致** | ✓ |
+| 队伍块字段 | `生命值/职责/驱散` + step 值 | **9 职业逐个比对 100% 一致** | ✓ |
+| 斜杠命令 | 12 个 | **全覆盖** + 13 个诊断命令 | ✓ |
+| `Arasaka/utils.py` | 723 行 | 723 行（仅 1 处等价改写） | ✓ |
+| `Arasaka/GetPixels.py` | 422 行 | 406 行（少的是正式服自己的死函数） | ✓ |
+| `core/macro.lua` | `[nogroup]` 宏条件 | 改成 `[@player]` 兜底 | **必须改**（`[nogroup]` 是 5.0.4 才有的，1.12 核心不认） |
+| 零售机制函数 | `updateRune` `updateDiseaseJudge` `updateHeroTalent` `updatePlayerEmpowerInfo` `updatePlayerStagger` `updatePlayerAssistant` `updateEncounterID` `ENCOUNTER_*` `UNIT_SPELLCAST_EMPOWER_*` `GetDefensiveAura*` | 无 | 无限服无对应机制/职业/API |
+| 零售机制块 | 蓄力/蓄力层数/一键辅助/英雄天赋/首领战/难度 | 无 | 同上 |
+| `core/config.lua` 的 `bossID` | 有（`updateEncounterID` 用） | 无 | 无限服无首领战 ID 机制 |
+
+正式服工作副本里另有两个**孤立文件**（不在 TOC、全项目零引用，可直接删）：
+`Utils.lua`、`core/spells.lua`。
 
 ---
 
