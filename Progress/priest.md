@@ -135,7 +135,7 @@ def _pick_dispel_unit(state_dict, 驱散开关, types): ...  # 挑驱散目标
 
 **驱散技能**：`驱散魔法`、`祛病术`（走动态宏 `@raidN`，按队友施放）
 
-> 战斗中光环数据被 secret 化（读不到减益类型）→ **那一格交给引擎染色**（引擎按 debuff 类型染，脱战战斗同一套，Lua 侧不写这一格）。Python 侧照旧从色条读，拿到的是**精确类型**（不是盲驱）。机制见 README「十六点五、驱散机制」。
+> 脱战时调 `C_UnitAuras.GetAuraDispelTypeColor` 直接把类型写进像素（和正式服 `main.lua:1348-1361` 完全一致）。战斗中光环数据被 secret 化、`GetAuraInstanceIDs` 返回 nil → 那一格保持上次值，**战斗中不驱散**，这是客户端硬限制。机制见 README「十六点五、驱散机制」。
 
 ---
 

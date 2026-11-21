@@ -791,7 +791,7 @@ end
 --                     光环实例 API 兼容
 -- ================================================================
 -- C_UnitAuras.GetUnitAuraInstanceIDs 在无限服上若不存在，退回逐条扫描
-function F:GetAuraInstanceIDs(unit, filter, maxCount)
+function F:GetAuraInstanceIDs(unit, filter, maxCount, sortRule)
     -- ⚠️ 客户端签名：GetUnitAuraInstanceIDs(unit, filter [, maxCount, sortRule, sortDirection])
     -- 第 4 个参数是 **sortRule（枚举）**，不是 includeNameplateIndex ——
     -- 传错会报 "bad argument #4 to '?'"。
@@ -803,7 +803,13 @@ function F:GetAuraInstanceIDs(unit, filter, maxCount)
     --   空表 = 真的没有减益 -> 可以安全地不驱散
     --   nil  = 读不到（可能受限）-> 那一格交给引擎染色，别写
     if C_UnitAuras.GetUnitAuraInstanceIDs then
-        local ok, ids = pcall(C_UnitAuras.GetUnitAuraInstanceIDs, unit, filter, maxCount)
+        local ok, ids
+        if sortRule ~= nil then
+            -- 正式服用法：GetUnitAuraInstanceIDs(unit, filter, maxCount, sortRule)
+            ok, ids = pcall(C_UnitAuras.GetUnitAuraInstanceIDs, unit, filter, maxCount, sortRule)
+        else
+            ok, ids = pcall(C_UnitAuras.GetUnitAuraInstanceIDs, unit, filter, maxCount)
+        end
         if ok and type(ids) == "table" then
             return ids
         end
@@ -824,11 +830,19 @@ function F:GetAuraInstanceIDs(unit, filter, maxCount)
     return ids
 end
 
+-- ★ 这个客户端的签名和零售不一样：
+--   零售   : C_UnitAuras.GetAuraDispelTypeColor(unit, auraInstanceID, curve)
+--   无限服 : C_UnitAuras.GetAuraDispelTypeColor(auraInstanceID, curve)   ← 只有 2 个参数
+--   实测（2026-11-22）：按零售的 3 参数传会报
+--   "bad argument #3 to '?' (Usage: ...GetAuraDispelTypeColor(auraInstance, curve))"
+--   -> 颜色一直拿不到，驱动散格永远是 0（脱战也不驱散）。
+--   两种签名都试一遍，兼容不同客户端。
 function F:GetAuraDispelTypeColor(unit, auraInstanceID, curve)
-    if C_UnitAuras.GetAuraDispelTypeColor then
-        local ok, color = pcall(C_UnitAuras.GetAuraDispelTypeColor, unit, auraInstanceID, curve)
-        if ok then return color end
-    end
+    if not C_UnitAuras.GetAuraDispelTypeColor then return nil end
+    local ok, color = pcall(C_UnitAuras.GetAuraDispelTypeColor, auraInstanceID, curve)
+    if ok and color then return color end
+    ok, color = pcall(C_UnitAuras.GetAuraDispelTypeColor, unit, auraInstanceID, curve)
+    if ok and color then return color end
     return nil
 end
 

@@ -1005,130 +1005,250 @@ python .workbuddy/check_readme.py               # 文档与代码一致
 
 驱散就一件事：**把「队友身上有哪种可驱减益」画进像素，Python 侧据此选人施法。**
 
-### 那一格完全交给引擎染色（脱战 / 战斗同一套）
+像素编码和正式服**完全一致**：红=0，绿=格号，蓝=类型号。
+
+| 那一格的像素 | Python 读到 | 含义 |
+|---|---|---|
+| `(0, 格号, 0)` | `0` | 没有可驱减益 |
+| `(0, 格号, 1)` | `1` | 魔法 |
+| `(0, 格号, 2)` | `2` | 诅咒 |
+| `(0, 格号, 3)` | `3` | 疾病 |
+| `(0, 格号, 4)` | `4` | 中毒 |
+
+> 诅咒（2）虽然会写进去，但圣骑士没有「祛除诅咒」，Python 侧按技能表决定能不能用。
+
+### 两条写入通道
+
+同一格、同一编码，两个写入方，按场景分工：
+
+| 通道 | 生效场景 | 原理 |
+|------|---------|------|
+| **Lua 直读** | 脱战 | 调 `C_UnitAuras.GetAuraDispelTypeColor` 直接拿颜色（正式服同款） |
+| **引擎染色** | 战斗中 | `AuraContainer` 的 slot + `AddDispelTypeTexture`，由引擎按 debuff 类型染色 |
+
+两者写入的是同一格、同一种编码，引擎纹理层级（10001）高于色条（10000），
+所以战斗中以引擎值为准，脱战时两者一致（都读到同一个类型）。
+
+---
+
+### 通道一：脱战 —— 直接调 C API（正式服写法）
+
+`main.lua` 的 `writeDispelCell(unit)`：
 
 ```lua
--- main.lua: UpdateDispelProbeUnit(index, unit)
--- 每个「玩家能驱的类型」一个 slot（Decursive 的做法）
-for _, t in ipairs(slotTypes) do
-    local slotOpts = {
-        sortMethod = 0,
-        sortDirection = 0,
-        -- ★ 这个 slot 只认一种类型 —— 引擎填槽时按它过滤
-        candidateFilters = { includeDispelTypes = { [DISPEL_TYPE_NAMES[t]] = true } },
-        initializeFrame = function(ab)
-            -- 这一整段必须在「创建窗口」内做 —— 之后 slot 子树就被拒了
-            local tex = ab:CreateTexture(nil, "OVERLAY")
-            tex:SetPoint("TOPLEFT", UIParent, "TOPLEFT", cx, cy)   -- 精确落在色条那一格
-            tex:SetSize(cw, ch)
-            tex:SetColorTexture(1, 1, 1, 1)                         -- 白色，颜色全由曲线给
-            ab:AddDispelTypeTexture(tex, {
-                showWithoutDispelType = false,                       -- 没减益时隐藏纹理
-                customDispelColorCurve = curve,
-            })
-        end,
-    }
-    c:AddAuraSlot("CD_DISPEL_PROBE_" .. index .. "_" .. t, "HARMFUL", slotOpts)
+local ok, ids = pcall(C_UnitAuras.GetUnitAuraInstanceIDs,
+    unit, "HARMFUL|RAID_PLAYER_DISPELLABLE", 4, 4)
+if not ok or type(ids) ~= "table" then
+    return                              -- 读不到 -> 保持上次的值，不清 0
+end
+if #ids == 0 then
+    CyberDeck:CreatTexture(index, 0)    -- 确实没有
+    return
+end
+-- 遍历找第一个「玩家能驱散」的：第一个减益可能正好驱不掉
+for i = 1, #ids do
+    local color = CyberDeck:GetAuraDispelTypeColor(unit, ids[i], dispelCurve)
+    if color and color.b and color.b > 0 then
+        CyberDeck:CreatTexture(index, color.b)
+        break
+    end
 end
 ```
 
-色条第 i 格的编码是 `(0, i/255, value)` —— **绿=索引、蓝=值、红=0**，
-Python 侧 `row_data[g] = b` 直接读走。
-
-| 情况 | 那格的像素 | Python 读到 |
-|------|------------|-----------|
-| 没有可驱减益 | 引擎隐藏纹理 → 露出色条初始色 `(0, i/255, 0)` | `0` |
-| 有可驱减益 | 引擎染成 `(0, i/255, 类型/255)` | `1`魔法 `2`诅咒 `3`疾病 `4`中毒 |
-
-**Lua 侧完全不写这一格** —— 只有一个写入方（引擎），不会再有两条路径抢同一格像素。
-
-> ⚠️ **必须按类型分 slot**：单 slot 不限类型时，队友同时挂着多种类型的减益，
-> 引擎只会挑一种染，挑到哪个取决于引擎内部排序 —— 表现就是「时好时坏」。
-
-### 唯一的问题：无限服在战斗中把光环 secret 化
-
-`C_UnitAuras.*` 全部读不到（抛 secret 错误 / 返回 nil 被扣留），
-所以 `readDispelType` 在战斗中返回 nil → 那一格写 0 → **不驱散**。
-
-实测确认（2026-11-21，无限服 1.60.1）：
-
-| 通道 | 战斗中 | 证据 |
-|------|--------|------|
-| 索引型光环 API | ❌ 抛 secret 错误 | `Auras cannot be accessed when secret` |
-| 按 ID / 名字查询 | ❌ 返回 nil（被扣留） | 与「没有这个 debuff」无法区分 |
-| UNIT_AURA 的 payload | ❌ 字段全是 secret | `addedAuras` / `isFullUpdate` 都读不到 |
-| AuraContainer 的 slot | ❌ forbidden | 对受保护 button 调方法会被拒 |
-| `SetApplicationBar` 数值 | ❌ forbidden | |
-| `initializeFrame` 回调次数 | ❌ 只在创建时触发一次 | 不是内容信号 |
-| NeverSecret 光环 | ❌ 全是 ContextuallySecret | 24 个经典 debuff 逐个查过 |
-| tooltip 类光环 API | ❌ 客户端没有 | `C_TooltipInfo` 只有物品/法术 |
-
-### 解法：**还是画进色条，只是「画」这一步改由引擎代劳**
-
-客户端自带的 Decursive 在受限（`DC.RESTRICTED_AURAS`）时就是这么干的
-（`Dcr_DebuffsFrame.lua:1168`）：**把一块我们自己创建的纹理交给引擎**，
-引擎按光环的驱散类型给它染色 —— **引擎侧操作，插件全程不读光环数据，所以不受限**。
+曲线 `dispelCurve` 的 x 轴是**类型号**，值 = `(0, 1, 类型/255)`：
 
 ```lua
--- 在 initializeFrame 回调（创建窗口）里
-local tex = ab:CreateTexture(nil, "OVERLAY")
-tex:SetPoint("TOPLEFT", UIParent, "TOPLEFT", cellX, cellY)   -- 精确落在色条那一格
-tex:SetSize(cellW, cellH)
-tex:SetColorTexture(1, 1, 1, 1)                             -- ⚠️ 白色，见下
-ab:ClearDispelTypeTextures()
-ab:AddDispelTypeTexture(tex, {
+-- updateSpellKnown 里构建
+if dispelCapabilities[i] then
+    dispelCurve:AddPoint(i, CreateColor(0, 1, i / 255, 1))   -- 能驱 -> 蓝通道 = 类型
+else
+    dispelCurve:AddPoint(i, CreateColor(0, 0, 0, 1))         -- 不能驱 -> 全黑
+end
+```
+
+#### 曲线三方对照（已逐行核对）
+
+| | 曲线的 x 轴 | 点的值 | 用途 |
+|---|---|---|---|
+| **本插件** | 类型号 1/2/3/4 | `(0, 1, 类型/255)` | 蓝通道 = 类型号，**给 Python 读数值** |
+| **正式服**（`Cyber_Deck-bak/main.lua:195-205`） | 类型号 1/2/3/4 | `(0, 1, 类型/255)` | **与本插件完全相同** |
+| **Decorative**（`Dcr_opt.lua:2357-2364`） | 类型号 1/2/3/4（`dtToBT`） | 用户自定义的边框颜色 | 蓝通道**不固定**，给人眼看 |
+
+类型号来源（Decorative `DCR_init.lua:125-134`，与本插件一致）：
+
+```
+魔法 = 1    诅咒 = 2    疾病 = 3    中毒 = 4    （流血 = 11，本插件不用）
+```
+
+**Decorative 把同一个 `dsCurve` 同时喂给两条通道**，
+这直接证明了**引擎染色的曲线 x 轴就是驱散类型号**：
+
+```lua
+-- Decorative.lua:588            C API 通道
+C_UnitAuras.GetAuraDispelTypeColor(Unit, auraInstanceID, D.Status.dsCurve)
+-- Dcr_DebuffsFrame.lua:1202     引擎染色通道
+customDispelColorCurve = D.Status.dsCurve
+```
+
+所以本插件的**两条通道用的是同一条 `dispelCurve`**：
+
+| 通道 | 用曲线的方式 |
+|---|---|
+| 脱战（Lua 读） | `GetAuraDispelTypeColor(unit, id, dispelCurve)` |
+| 战斗（引擎染） | `AddDispelTypeTexture(tex, { customDispelColorCurve = dispelCurve })` |
+
+**输出完全同码** —— 蓝通道都是类型号，Python 端零改动。
+
+> Decorative 的曲线额外有一个 `x=0` 点（正常色），
+> 因为它要用「无驱散类型」的槽显示常态边框；
+> 本插件的 slot 全部 `showWithoutDispelType = false`（无类型就隐藏），
+> 用不到 x=0，因此与**正式服保持一致**（正式服也没有 x=0 点）。
+
+**与正式服的唯一差别**：读不到时**不写 0**（保留上次的值），
+因为「读不到 ≠ 没有」，写 0 会把脱战时读到的正确值清掉。
+
+#### ⚠️ 本客户端的 API 签名和零售不一样
+
+```
+零售   : C_UnitAuras.GetAuraDispelTypeColor(unit, auraInstanceID, curve)   3 参数
+无限服 : C_UnitAuras.GetAuraDispelTypeColor(auraInstanceID, curve)         2 参数
+```
+
+按零售的 3 参数传会报
+`bad argument #3 to '?' (Usage: ...GetAuraDispelTypeColor(auraInstance, curve))`，
+**颜色永远拿不到，那一格永远是 0（脱战也不驱散）**。
+
+`core/forever.lua` 的 `GetAuraDispelTypeColor` 两种签名都试一遍，兼容不同客户端。
+
+---
+
+### 通道二：战斗中 —— 引擎染色（AuraContainer）
+
+战斗中 Lua 读不到光环（见下节），但**引擎能读**，
+所以把「驱散」那一格的纹理交给引擎，由它按 debuff 类型染色。
+
+做法照抄 **Shingen Forever 版**（`AddOns/Shigure-main/Forever/Shingen/core/block.lua`
+的 `AnchorAuraPixelButton` / `CreateAuraPixelCell`），三个关键点缺一不可：
+
+```lua
+-- 1) 按钮尺寸精确到一格 + 裁剪子级
+button:SetSize(rect.w, rect.h)
+button:SetClipsChildren(true)
+--    引擎必然把按钮撑大（实测 16x16 -> 12 格宽），
+--    但一格的 cell 在按钮左上角，裁剪后依然完整显示 -> 不污染左右邻格
+
+-- 2) 绝对定位到色条那一格
+button:SetPoint("TOPLEFT", bars, "TOPLEFT", rect.x, 0)
+
+-- 3) 像素格是按钮的子 Frame，驱散纹理建在 cell 里
+local cell = CreateFrame("Frame", nil, button)
+cell:SetSize(rect.w, rect.h)
+cell:SetPoint("TOPLEFT", button, "TOPLEFT", 0, 0)
+local tex = cell:CreateTexture(nil, "OVERLAY")
+tex:SetAllPoints(cell)
+tex:SetColorTexture(1, 1, 1, 1)        -- 白色，颜色全由曲线提供
+button:AddDispelTypeTexture(tex, {
     showIcon = false,
+    showWhenHarmful = true,
+    showWhenHelpful = false,
+    showWithoutDispelType = false,
     style = Enum.CustomAuraButtonDispelTypeTextureStyle.PreserveAsset,
-    customDispelColorCurve = curve,     -- 类型 -> (0, 索引/255, 类型/255)
+    customDispelColorCurve = dispelCurve,
 })
 ```
 
-曲线按**色条索引**各建一条（绿通道要编码索引）：
+**为什么纹理要建在 cell（按钮的子 Frame）里**：
+引擎要求纹理必须是 owner 的
+`direct or indirect descendant`（实测报
+`bad object '...' must be the owner or a direct or indirect descendant of owner`），
+cell 里的纹理是按钮的**间接后代**，正好满足。
+
+**类型分流**：每个队友 × 每种类型 = 一个 slot，
+`candidateFilters = { includeDispelTypes = { [typeName] = true } }`，
+类型名用 `Magic` / `Curse` / `Disease` / `Poison`
+（与 Shingen、Decursive 一致）。同一格的多个 slot 里，
+引擎只显示「有对应 debuff 的那个」，所以同格最终只有一个颜色。
+
+**调用顺序**照抄 Shingen / Decorative：
+`AddAuraSlot` → `SetUnit` → `SetShown` → `SetEnabled`。
+顺序反了引擎会在 slot 还没注册时就开始 layout。
+
+#### 还要抄 Shingen 的这四处
+
+| Shingen 出处 | 内容 | 为什么必须 |
+|---|---|---|
+| `block.lua:1163-1167` | `EnsureAuraContainerLoaded()`：`C_AddOns.LoadAddOn("Blizzard_AuraContainer")` | 不加载模板，container 行为不完整 |
+| `block.lua:1379-1380` | `sortMethod = AuraContainerSortMethod.ExpirationOnly` / `sortDirection = AuraContainerSortDirection.Reverse` | 用引擎的**全局枚举表**（不是 `Enum.` 命名空间），排序才按剩余时间 |
+| `block.lua:719-731` | `candidateFilters` **每次新建集合** | 引擎可能改写原表，导致类型过滤**静默失效** |
+| `block.lua:765-770` | `SetMouseMotionEnabled(false)` + `EnableMouse(false)` | 探针不抢鼠标 |
+| `Retail/block.lua:945` | **重绑顺序**：`SetUnit` → `SetAuraSlotCandidateFilters` → `UpdateAllAuras` | **`SetUnit` 会冲掉候选过滤**，不重绑则槽位落到「第一个光环」，类型会错 |
+| `Retail/block.lua:946-960` | `RebindContainerSpellFilters(container, unit)` | 换人 / 过场后重绑全部过滤 |
+
+#### 重绑的实现
 
 ```lua
-curve:AddPoint(0, CreateColor(0, cell / 255, 0, 1))            -- 无 debuff
+-- UpdateDispelProbeUnit 里（unit 变了或标记了 needRebind 时）
+probe.container:SetUnit(unit)                       -- ① 换单位
 for t = 1, 4 do
-    curve:AddPoint(t, CreateColor(0, cell / 255, t / 255, 1))   -- 魔法/诅咒/疾病/中毒
+    probe.container:SetAuraSlotCandidateFilters(key, {
+        includeDispelTypes = { [typeName] = true },   -- ② 重绑过滤（每次新建集合）
+    })
 end
-curve:AddPoint(5, CreateColor(0, cell / 255, 5 / 255, 1))      -- 其它类型 = 未知
-curve:AddPoint(11, CreateColor(0, cell / 255, 5 / 255, 1))     -- 流血 = 未知
+probe.container:UpdateAllAuras()                   -- ③ 强制重新分配光环
 ```
 
-**脱战和战斗是同一套** —— 引擎不受限，脱战时它照样能染色，
-所以 Lua 侧那一行都不需要写，也就没有「两条路径抢同一格像素」的问题。
-Python 端读的还是同一根色条、同一套编码，**一行都不用改**。
+**什么时候需要重绑**：
 
-### 四个必须记住的坑
+| 触发 | 处理 |
+|------|------|
+| 换人 / 队友顺序变化 | 队伍签名（`unit:index` 排序拼接）比对，变了就标记所有探针重绑 |
+| 过场（`PLAYER_ENTERING_WORLD`） | `MarkDispelProbesRebind()` 强制重绑 |
 
-**① 模板必须先加载**
+所以 `SyncDispelProbes` 可以挂在 0.12 秒档而不会造成性能问题 ——
+只有真正需要时才调 `UpdateAllAuras`。
 
-```lua
-LoadAddOn("Blizzard_AuraContainer")   -- 不加载的话 CreateFrame 出来的只是普通 frame
+#### Shigure 的编码差异（我们保持自己的）
+
+Shingen 的驱散格是**每种类型各占一格**（"魔法"/"诅咒"/"疾病"/"中毒"/"流血"），
+格子里用 `button:SetDurationText` 绑定引擎的原生剩余时间文字。
+
+本插件压缩成**一格、蓝通道 = 类型号**，与正式服的 C API 路径**完全同码**，
+这样脱战（Lua 读）和战斗（引擎染）写的是同一格同一种编码，Python 端零改动。
+
+---
+
+### 战斗中为什么 Lua 读不到（客户端硬限制）
+
+错误原文：
+
+```
+Auras cannot be accessed when secret while tainted by 'Cyber_Deck'
 ```
 
-不加载 → `AddAuraSlot` 是 nil → 探针压根建不起来 → 那一格永远是色条初始色
-→ 读到 0 → **从不驱散**。（2026-11-21 踩过）
+关键词是 **`tainted by 'Cyber_Deck'`** —— 是**插件自身被污染**，
+不是「战斗中所有插件都不能读」。
 
-**② 纹理必须是白色**
+- 脱战不检查 taint，所以**脱战能读**；
+- 战斗中 secret 机制对 tainted 插件拒绝访问光环，**读不到**；
+- 引擎染色**不受 taint 影响**（`AddAuraSlot` 不是受保护操作），所以战斗中只能用它。
 
-颜色**全部由曲线提供**。若纹理自带颜色，引擎若是用「乘法」把曲线色乘上去，
-结果会被压成全黑（实测：纹理 `(0, 索引/255, 0)` × 曲线 `(0, 索引/255, 类型/255)`
-= `(0,0,0)`）→ 那一格全黑 → Python 读到驱散=0。
-白色纹理无论引擎是「设置」还是「相乘」都正确。
+零售正式服（12.0）没有这么严，同样代码可用 —— 这是 Forever 客户端的差异。
 
-**③ 曲线的 x 轴是类型原始值**
+---
 
-x = 1魔法 / 2诅咒 / 3疾病 / 4中毒（Decursive 的 `DC.DTtoBT` 与本插件一致），
-**不是**归一化的 `t/255`。实测引擎取 Disease 时精确落在 x=3 那点。
+### 已排除的方案
 
-**④ 每个类型一个 slot，不能只建一个**
+| 方案 | 结果 |
+|---|---|
+| 引擎染色画在色条上，纹理 `SetSize` 一格 | 引擎会重置纹理尺寸（实测 5.6x2 变成 12 格宽） |
+| 引擎染色，纹理 `SetScale` 抵消 | 缩到小于最小渲染阈值，直接不显示 |
+| 引擎染色，缩**按钮**到一格 | 同上，不显示 |
+| 引擎染色，纹理锚 UIParent 绝对定位 | 不是祖先，被裁剪掉，看不见 |
+| 引擎染色，纹理锚色条（祖先） | 依然不可见 |
+| 自己遍历光环求值算类型号 | 战斗中同样被 secret 挡住 |
 
-单 slot 且 `candidateFilters` 为空时，队友身上同时挂着多种类型的减益，
-引擎只会挑一种染 —— 挑到哪个取决于引擎内部排序，**表现就是「时好时坏」**。
-按类型分流（每个能驱的类型一个 slot）后，命中哪个就是哪个。
-
-Decursive 的对应实现：`Dcr_DebuffsFrame.lua:1232` 建 7 个 slot，
-每个 slot 的 `candidateFilters.includeDispelTypes` 限定自己负责的类型。
+结论：**引擎染色的块最小约 12 格宽，尺寸和位置都不可控**，
+必须靠 `SetClipsChildren` + cell 把它约束回一格。
 
 ### 第二层：驱散技能必须走动态宏
 
@@ -1270,7 +1390,7 @@ D:/DevTools/pyenv-re313/Scripts/python.exe Arasaka/check_dispel.py
 | 各职业的 200~211 索引 | 已删（后续版本技能，60 级经典技能组不提供） |
 | `staticSpells` 的 `/` 前缀判断 | **已回滚**。`staticSpells` 一律拼 `/cast`，完整宏体只能放 `specialSpells` |
 | `main.lua` 的驱散探测实验脚手架（`DT2`~`DT8` / `dt*_safeStr` / `dt3_probe` / `dt4_access` / `dt7_*` / `DT8_PROBES`） | **已删除**（2026-11-21）。8 轮实验的结论已固化进生产路径，代码本身零引用 |
-| `core/forever.lua` 的 debuff 学习表（`dispelTypeFromName` / `LearnDebuffTypes` / `QueryDispelBySpellTable`）+ `db.char.dispelSpellTypes` | **已删除**。「脱战学表→战斗查表」实测走不通（受限时按 ID 查询返回 nil，无法区分命中与读不到），已被引擎染色路径取代 |
+| `core/forever.lua` 的 debuff 学习表（`dispelTypeFromName` / `LearnDebuffTypes` / `QueryDispelBySpellTable`）+ `db.char.dispelSpellTypes` | **已删除**。「脱战学表→战斗查表」实测走不通（受限时按 ID 查询返回 nil，无法区分命中与读不到），现改为调 `C_UnitAuras.GetAuraDispelTypeColor` 直接取类型（正式服同款） |
 | `main.lua` 的 `clearGroupBlocks` | **已删除**（2026-11-21）。队伍块清零已由 `updateGroup` 重建 + Python 端 `_role_not_zero` 过滤覆盖 |
 | `core/core.lua` help 里的 `/cy dispeltest` | **已删除**。该命令分支从来就不存在 |
 | `core/block.lua` 的 `ClearAllCyberDeckBars` | **保留并已接上调用点**（2026-11-21）。换专精时清掉上一套专精建的计数条，见下方说明 |

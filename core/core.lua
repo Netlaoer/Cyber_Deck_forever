@@ -361,16 +361,18 @@ function CyberDeck:SlashCommand(input, editbox)
             self:PrintSecretContext()
         end
     elseif command == "gui" then
+
         if self.OpenInfoGUI then
             self:OpenInfoGUI()
         end
     else
+        -- 未知命令明确报出来 —— 静默打开 GUI 会让人以为「命令没反应」
+        self:Print(("|cffff0000未知命令: %s|r  输入 /cy help 看命令列表")
+            :format(tostring(command)))
         if self.OpenInfoGUI then
             self:OpenInfoGUI()
         elseif self.optionsFrame and self.optionsFrame.name and Settings and Settings.OpenToCategory then
             pcall(Settings.OpenToCategory, self.optionsFrame.name)
-        else
-            self:Print("输入 /cy help 查看命令。")
         end
     end
 end

@@ -45,7 +45,14 @@ function CyberDeck:CreatTexture(i, b)
     end
 end
 
--- 取色条第 i 格的位置与尺寸（引擎染色探针要用：把纹理精确盖在那一格上）
+-- 取色条第 i 格的位置与尺寸（**色条内部坐标系**）
+--
+-- ★ 必须用 BLOCK_FIX_CONFIG.blockWidth，并且调用方要把宿主 frame 挂在
+--   CyberDeckColorBars 上。原因：
+--   bars:GetWidth() 报的是「有效宽度」(1418.5)，实际渲染是 1819 物理像素，
+--   真实 effective scale = 1819/1418.5 = 1.2825（GetScale() 报 1 是假象）。
+--   宿主挂 bars -> 用 bars 内部坐标 -> 物理位置 = 1379.6 * 1.2825 = 1770 ✓
+--   宿主挂 UIParent -> 系数变成 0.7046 -> 物理 972 ✗（偏了 70 多格）
 function CyberDeck:GetColorBarCellRect(i)
     if not i or i <= 0 or i > BLOCK_FIX_CONFIG.blockCount then return nil end
     return {

@@ -89,9 +89,11 @@ local helpfulSpells = {
     [77472] = 15,   -- 治疗波
 }
 
+local dispelCurve = C_CurveUtil.CreateColorCurve()
 target.enemyCurve = C_CurveUtil.CreateColorCurve()
 target.friendCurve = C_CurveUtil.CreateColorCurve()
 
+dispelCurve:SetType(Enum.LuaCurveType.Step)
 target.enemyCurve:SetType(Enum.LuaCurveType.Step)
 target.friendCurve:SetType(Enum.LuaCurveType.Step)
 
@@ -121,7 +123,8 @@ end
 local succSpells = {}
 local succIndex = 1
 local function printSuccSpell(spellID)
-    if succSpells[spellID] or (blocks.spells and blocks.spells[spellID]) then return end
+    if not blocks or not blocks.spells then return end
+    if succSpells[spellID] or blocks.spells[spellID] then return end
     succSpells[spellID] = true
     print("[" .. spellID .. "]" .. " = { index = " .. succIndex .. ", }, -- " .. GetSpellName(spellID))
     succIndex = succIndex + 1
@@ -174,11 +177,9 @@ end
 -- 于是「驱散」像素写 0 -> 决策层永远找不到要驱散的人。
 -- Decursive 的做法是受限时干脆不读光环（见它的 AurasRestricted）。
 --
--- 这里的解法：**那一格完全交给引擎**（见 UpdateDispelProbeUnit）——
--- Lua 侧不读光环、也不写这一格，脱战和战斗是同一套；
--- 引擎按 debuff 类型把那一格染成 (0, 索引/255, 类型/255)，
--- 没有减益时纹理隐藏，露出色条初始色 (0, 索引/255, 0) = 「没有减益」。
--- Python 侧照旧从色条读，一行都不用改。
+-- 解法**和正式服完全一致**：调 C_UnitAuras.GetAuraDispelTypeColor 直接拿颜色，
+-- 不需要自己遍历光环、求值曲线、算类型号（正式服 main.lua:1348-1361 就是这么写的）。
+-- 战斗中该 API 会被 secret 化读不到 -> 那一格保持 0，这是客户端的硬限制。
 -- ================================================================
 
 -- 遍历光环列表，找第一个「玩家能驱散」的（曲线求值非零）
@@ -186,7 +187,7 @@ end
 --
 -- ★ 只用于**目标侧**（getTargetDispelType：读目标身上的减益类型，
 --   编码成 11~15 写进「目标类型」像素）。
---   队友侧的「驱散」格已改成引擎染色，不再走这里。
+--   队友侧走的是 writeDispelCell（直接调 C API 拿颜色）。
 local function pickTypeByCurve(unit, ids, curve)
     if not ids then return nil end
     for i = 1, #ids do
@@ -199,189 +200,11 @@ local function pickTypeByCurve(unit, ids, curve)
 end
 
 -- ================================================================
--- 引擎染色驱散探针（受限下的唯一通道）
---
--- 背景：无限服（零售 12.1 的 secret 机制）在战斗中禁掉了**所有**光环读取 API ——
---   索引型 API 抛 secret 错误 / 按 ID·名字查询返回 nil（被扣留）/
---   UNIT_AURA 的 payload 字段全是 secret / AuraContainer 的 slot 读不了 /
---   NeverSecret 无候选 / 无 tooltip 类光环 API。
---
--- 做法：**和正式服一样画进色条**，只是「画」这一步改由引擎完成 ——
---   正式服：Lua 读光环 -> 算出类型 -> CreatTexture(格index, 类型) -> Python 从色条读
---   无限服：Lua 读不到 -> 引擎按光环类型给**色条上那一格的纹理**染色
---                     -> Python 照旧从色条读（**Python 端零改动**）
---
--- 机制（Decursive Dcr_DebuffsFrame.lua:1168 原版）：
---   在 initializeFrame 回调（创建窗口）里，把自己创建的纹理交给引擎：
---     local tex = ab:CreateTexture(nil, "OVERLAY")
---     tex:SetColorTexture(0, index/255, 0, 1)      -- 初始 = 「没有 debuff」
---     ab:ClearDispelTypeTextures()
---     ab:AddDispelTypeTexture(tex, { showIcon=false, customDispelColorCurve=curve })
---   引擎按光环的驱散类型给这块纹理染色 —— **引擎侧操作，所以不受限**。
---
--- 曲线：每个「驱散」格子一条（绿通道要编码色条索引）
---   x = 驱散类型（魔法1 诅咒2 疾病3 中毒4，流血11…）
---   颜色 = (0, 色条索引/255, 类型/255) —— 和色条编码完全一致：
---     红 = 0（读端靠「红=0」判断这一格是有效数据）
---     绿 = 色条索引（Python 当 row_data 的 key）
---     蓝 = 值（驱散类型 1~4；5 = 其它类型 = 未知）
---
--- 引擎取曲线的 x 轴是**类型原始值**，
---   Disease 会取到 x=3 那点 -> 蓝通道精确为 3；驱散后回到黑。
---
--- 安全设计：
---   * 按钮本体放在色条**下方**的空区，只有那块纹理精确落在色条格子上
---     —— 引擎就算把按钮尺寸改大也碰不到别的格子。
---   * 纹理初始色 = (0, 索引/255, 0) = 「没有 debuff」，
---     和 Lua 写进色条的值完全一致 -> 引擎不染色时也不污染色条。
--- ================================================================
 
-local dispelProbeUnits = {}   -- [groupIndex] = { container=, curve=, unit=, ok=, cell= }
-
--- 驱散类型号 -> 引擎 candidateFilters.includeDispelTypes 的类型名
--- （与 Decursive 的 DC.TypeNames 一致：Magic / Curse / Disease / Poison）
-local DISPEL_TYPE_NAMES = {
-    [1] = "Magic",
-    [2] = "Curse",
-    [3] = "Disease",
-    [4] = "Poison",
-}
-
--- 给第 index 个队友建（或复用）探针：把引擎染色的纹理盖在色条的「驱散」格上
---
--- ★ 每个「玩家能驱的类型」一个 slot（Decursive 的做法）：
---   单 slot 不限类型时，队友身上同时挂着多种类型的减益，引擎只会挑一种染，
---   挑到哪个取决于引擎内部排序 —— 表现就是「时好时坏」。
---   按类型分流后，每个 slot 只认一种类型，各自独立染色，命中哪个就是哪个。
-function CyberDeck:UpdateDispelProbeUnit(index, unit)
-    if not index or not unit then return end
-    if not blocks.groups then return end
-    local cell = blocks.groups.start + (index - 1) * blocks.groups.num + blocks.groups.dispel
-    if cell <= 0 or cell > 255 then return end
-    local rect = self:GetColorBarCellRect(cell)
-    if not rect then return end
-    local cx, cy, cw, ch = rect.x, rect.y, rect.w, rect.h
-
-    local probe = dispelProbeUnits[index]
-    if not probe then
-        -- 曲线：类型 -> (0, 色条索引/255, 类型/255)
-        -- x 轴是**类型的原始值**（Decursive 的 DC.DTtoBT 也是这套：魔法1 诅咒2 疾病3 中毒4 流血11）
-        local curve = C_CurveUtil.CreateColorCurve()
-        curve:SetType(Enum.LuaCurveType.Step)
-        curve:AddPoint(0, CreateColor(0, cell / 255, 0, 1))
-        for t = 1, 4 do
-            curve:AddPoint(t, CreateColor(0, cell / 255, t / 255, 1))
-        end
-        -- x >= 5（流血等不可驱类型）-> 蓝通道 5 = 类型未知
-        curve:AddPoint(5, CreateColor(0, cell / 255, 5 / 255, 1))
-        curve:AddPoint(11, CreateColor(0, cell / 255, 5 / 255, 1))
-
-        -- 按钮本体放在色条下方的空区（y=24 往下没有别的像素条）
-        local host = CreateFrame("Frame", nil, UIParent)
-        host:SetSize(32, 32)
-        host:SetPoint("TOPLEFT", UIParent, "TOPLEFT", cx, -24)
-        host:SetFrameStrata("TOOLTIP")
-        host:SetFrameLevel(10001)      -- 必须高于色条（10000）
-        host:Show()
-
-        -- ⚠️ 必须先加载模板：AuraContainer 的模板在 Blizzard_AuraContainer 里，
-        --    不加载的话 CreateFrame 出来的只是个普通 frame，AddAuraSlot 是 nil，
-        --    探针压根建不起来（色条那格就永远是 Lua 写的值 -> 战斗中读到 0）。
-        if type(_G.LoadAddOn) == "function" then
-            pcall(_G.LoadAddOn, "Blizzard_AuraContainer")
-        end
-        if C_AddOns and C_AddOns.LoadAddOn then
-            pcall(C_AddOns.LoadAddOn, "Blizzard_AuraContainer")
-        end
-        local c = CreateFrame("AuraContainer", nil, host, "CustomAuraContainerTemplate")
-        c:SetAllPoints(host)
-        c:SetShown(true)
-        c:SetEnabled(true)
-
-        -- 只给「玩家能驱的类型」建 slot —— 不能驱的类型（比如流血）不建，
-        -- 引擎就不会去染它，Python 端也就不会拿到匹配不上的类型而漏驱。
-        local caps = self.dispelCapabilities or {}
-        local slotTypes = {}
-        for t = 1, 4 do
-            if caps[t] then slotTypes[#slotTypes + 1] = t end
-        end
-        if #slotTypes == 0 then
-            -- 能力表还没算出来（首次调用早于 updateSpellKnown）-> 先全建
-            for t = 1, 4 do slotTypes[#slotTypes + 1] = t end
-        end
-
-        local ok, err = true, nil
-        for _, t in ipairs(slotTypes) do
-            local typeName = DISPEL_TYPE_NAMES[t]
-            local slotOpts = {
-                sortMethod = 0,
-                sortDirection = 0,
-                -- ★ 这个 slot 只认一种类型 —— 引擎填槽时按它过滤
-                candidateFilters = { includeDispelTypes = { [typeName] = true } },
-                initializeFrame = function(ab)
-                    -- 这一整段必须在「创建窗口」内做 —— 之后 slot 子树就被拒了
-                    pcall(function() ab:EnableMouse(false) end)
-                    pcall(function()
-                        ab:ClearAllPoints()
-                        ab:SetPoint("TOPLEFT", host, "TOPLEFT", 0, 0)
-                        ab:SetSize(32, 32)
-                    end)
-                    local tex = ab:CreateTexture(nil, "OVERLAY")
-                    tex:ClearAllPoints()
-                    -- ★ 精确落在色条那一格上
-                    tex:SetPoint("TOPLEFT", UIParent, "TOPLEFT", cx, cy)
-                    tex:SetSize(cw, ch)
-                    -- ⚠️ 纹理必须是**白色**：颜色全部由曲线提供。
-                    --   引擎可能是「设置」曲线色，也可能是「乘」曲线色 ——
-                    --   白色两种情况都对；若纹理自带颜色，乘法会把结果压成全黑。
-                    --   （v8 实验就是白纹理 + 曲线色，实测 (255,1,3) 正确）
-                    --   showWithoutDispelType=false -> 没有匹配的减益时引擎把纹理隐藏，
-                    --   于是那一格露出色条的初始色 (0, 索引/255, 0) = 「没有减益」。
-                    tex:SetColorTexture(1, 1, 1, 1)
-                    tex:Show()
-                    -- ★ 把纹理交给引擎，引擎按 debuff 类型染色
-                    ab:ClearDispelTypeTextures()
-                    ab:AddDispelTypeTexture(tex, {
-                        showIcon = false,
-                        showWhenHarmful = true,
-                        showWhenHelpful = false,
-                        showWithoutDispelType = false,
-                        style = Enum.CustomAuraButtonDispelTypeTextureStyle.PreserveAsset,
-                        customDispelColorCurve = curve,
-                    })
-                end,
-            }
-            local sok, serr = pcall(function()
-                return c:AddAuraSlot("CD_DISPEL_PROBE_" .. index .. "_" .. t, "HARMFUL", slotOpts)
-            end)
-            if not sok then
-                ok, err = false, serr
-            end
-        end
-        probe = { container = c, curve = curve, ok = ok, err = err, unit = nil, cell = cell }
-        dispelProbeUnits[index] = probe
-    end
-    if probe.unit ~= unit then
-        probe.unit = unit
-        local ok, err = pcall(function() probe.container:SetUnit(unit) end)
-        if not ok then probe.err = err end
-    end
-end
-
--- 同步探针：按当前 group 表，保证每格的容器建好并指向对应队友
-function CyberDeck:SyncDispelProbes()
-    if not blocks or not blocks.groups then return end
-    if not group then return end
-    for unit, data in pairs(group) do
-        if data and data.index then
-            self:UpdateDispelProbeUnit(data.index, unit)
-        end
-    end
-end
 
 local function updateCooldownSpellKnown()
     spells = {}
-    if not blocks.spells then return end
+    if not blocks or not blocks.spells then return end
     C_Timer.After(1, function()
         for spellID, info in pairs(blocks.spells) do
             -- key 已经是 ResolveSpellID 用 C_SpellBook.IsSpellKnown 过滤过的 rank ID，
@@ -423,33 +246,17 @@ function CyberDeck:updateSpellKnown()
     end
 
     -- 引擎染色探针按「玩家能驱的类型」分流 slot，每个类型一个 slot。
-    -- 这里把能力表存下来，UpdateDispelProbeUnit 建 slot 时要用。
-    self.dispelCapabilities = dispelCapabilities
-
-    -- 能力表变了（学会新驱散法术）-> 已建的 slot 分流要跟着变，重建探针。
-    -- 指纹只取「玩家能驱的类型集合」，与顺序无关。
-    local sig = {}
-    for t = 1, 4 do
-        if dispelCapabilities[t] then sig[#sig + 1] = t end
-    end
-    local sigStr = table.concat(sig, ",")
-    if self.dispelProbeSig ~= sigStr then
-        self.dispelProbeSig = sigStr
-        for _, p in pairs(dispelProbeUnits) do
-            if p and p.container and p.container.Destroy then
-                pcall(p.container.Destroy, p.container)
-            end
-        end
-        wipe(dispelProbeUnits)
-    end
-
+    dispelCurve:ClearPoints()
     target.enemyCurve:ClearPoints()
     target.friendCurve:ClearPoints()
 
     for i, v in pairs(dispelCapabilities) do
         if v then
+            -- 正式服同款：能驱 -> 蓝通道 = 类型号；不能驱 -> 全黑
+            dispelCurve:AddPoint(i, CreateColor(0, 1, i / 255, 1))
             target.friendCurve:AddPoint(i, CreateColor(0, 1, (i + 11) / 255, 1))
         else
+            dispelCurve:AddPoint(i, CreateColor(0, 0, 0, 1))
             target.friendCurve:AddPoint(i, CreateColor(0, 0, 11 / 255, 1))
         end
     end
@@ -1509,8 +1316,11 @@ function CyberDeck:OnUpdateUnitAura()
 end
 
 function CyberDeck:updateGroup()
-    self.group = {}
-    self.groupList = {}
+    -- ⚠️ 必须用 wipe 而不是 `self.group = {}`：
+    --    group / groupList 在文件顶部被 local 捕获过（local group = CyberDeck.group），
+    --    重建 self.group 会让 local 继续指向旧表 —— 数据写进旧表、self.group 永远为空。
+    wipe(self.group)
+    wipe(self.groupList)
     local i = 1
     for unit in self:IterateGroupMembers() do
         table.insert(groupList, unit)
@@ -1538,8 +1348,6 @@ function CyberDeck:updateGroup()
         self:updateUnitValid(unit)
         self:updateUnitHealthInfo(unit)
         self:updateUnitFullAura(unit)
-        -- 引擎染色探针：每个队友一格，引擎按 debuff 类型染色（战斗中也能用）
-        self:UpdateDispelProbeUnit(i, unit)
         i = i + 1
     end
 end
@@ -1567,6 +1375,8 @@ function CyberDeck:ZONE_CHANGED_INDOORS()
 end
 
 function CyberDeck:PLAYER_ENTERING_WORLD()
+    -- 过场后光环缓存可能失效 -> 强制重绑探针的候选过滤
+    if self.MarkDispelProbesRebind then self:MarkDispelProbesRebind() end
     state.mapID = C_Map.GetBestMapForUnit("player") or 0
 end
 
@@ -1931,11 +1741,255 @@ function CyberDeck:TestFiltered(unit, auraInstanceID)
     end
 end
 
+-- 把「队友身上可驱减益的类型」写进色条那一格
+--
+-- ★ 直接照正式服的写法（Cyber_Deck-bak/main.lua:1348-1361）：
+--   调 C_UnitAuras.GetAuraDispelTypeColor(unit, auraInstanceID, curve) 拿颜色，
+--   不需要自己遍历光环、求值、算类型号。
+--   曲线 dispelCurve 的 x 轴是类型号，值 = (0, 1, 类型/255)，
+--   所以返回色的蓝通道就是类型号，直接写进像素的蓝通道。
+--
+-- ⚠️ 与正式服的唯一差别：**受限时不写这一格**。
+--   正式服的 else 分支会写 0，但在无限服战斗中 GetAuraInstanceIDs 返回 nil
+--   （读不到 ≠ 没有），写 0 会把上次的正确值清掉。
+local function writeDispelCell(unit)
+    -- ⚠️ blocks 是全局变量，在 loadPlayerBlocks() 里才赋值，之前是 nil。
+    --    少写 `not blocks` 的话，这里会直接 "attempt to index a nil value"。
+    if not blocks or not blocks.groups then return end
+    local obj = group[unit]
+    if not obj then return end
+    local index = blocks.groups.start + (obj.index - 1) * blocks.groups.num + blocks.groups.dispel
+    -- ★ 正式服写法（Cyber_Deck-bak/main.lua:1352）：
+    --   C_UnitAuras.GetUnitAuraInstanceIDs(unit, "HARMFUL|RAID_PLAYER_DISPELLABLE", 1, 4)
+    --   实测（2026-11-22）：各种签名都不抛错，API 本身**没有**被 secret 限制。
+    --   之前把 pcall 失败一律当成「受限」，是误判 —— 签名不对也会走那条路。
+    local ok, ids = pcall(C_UnitAuras.GetUnitAuraInstanceIDs,
+        unit, "HARMFUL|RAID_PLAYER_DISPELLABLE", 4, 4)
+    local st
+    if not ok or type(ids) ~= "table" then
+        st = 5                       -- 真的读不到 -> 不写这一格，保留上次的值
+    elseif #ids == 0 then
+        st = 0                       -- 确实没有可驱减益
+    else
+        -- 遍历找第一个「玩家能驱散」的：第一个减益可能正好驱不掉
+        st = 0
+        for i = 1, #ids do
+            -- 用兼容封装：这个客户端是 2 参数签名 (auraInstance, curve)
+            local color = CyberDeck:GetAuraDispelTypeColor(unit, ids[i], dispelCurve)
+            if color and color.b and color.b > 0 then
+                st = math.floor(color.b * 255 + 0.5)   -- 1魔法 2诅咒 3疾病 4中毒
+                break
+            end
+        end
+    end
+    if st == 5 then
+        return                       -- 读不到 -> 保持上次的值，不清 0
+    end
+    CyberDeck:CreatTexture(index, st / 255)
+end
+
+-- ================================================================
+-- 引擎染色驱散探针
+--
+-- 做法照抄 Shingen Forever 版（AddOns/Shigure-main/Forever/Shingen/core/block.lua）：
+--   AnchorAuraPixelButton (765) + CreateAuraPixelCell (772)
+--
+-- 三个关键点（缺一不可）：
+--  1) 按钮 SetSize 精确到一格 + SetClipsChildren(true)
+--     引擎必然把按钮撑大（实测 16x16 -> 12 格宽），但一格的 cell 在按钮左上角，
+--     裁剪后依然完整显示 -> 不污染左右邻格。
+--  2) 按钮绝对定位到色条（锚 CyberDeckColorBars，实测中心误差 <1 像素）。
+--  3) 像素格是按钮的子 Frame，驱散纹理建在 cell 里 ——
+--     纹理是按钮的「间接后代」，正好满足引擎
+--     "must be the owner or a direct or indirect descendant of owner"。
+--
+-- 每个队友 x 每种类型 = 一个 slot（candidateFilters 按类型分流，
+-- 与 Decursive / Shingen 一致）。同一格的多个 slot 里，
+-- 引擎只显示「有对应 debuff 的那个」，所以同格最终只有一个颜色。
+-- ================================================================
+
+local dispelProbeUnits = {}     -- [groupIndex] = { container =, slots = {} }
+local DISPEL_TYPE_NAMES = { [1] = "Magic", [2] = "Curse", [3] = "Disease", [4] = "Poison" }
+
+-- 排序方式用引擎的全局枚举表（Shingen block.lua:1379-1380 同款）：
+--   AuraContainerSortMethod.ExpirationOnly / AuraContainerSortDirection.Reverse
+local DISPEL_SORT_METHOD = (AuraContainerSortMethod and AuraContainerSortMethod.ExpirationOnly) or 0
+local DISPEL_SORT_DIRECTION = (AuraContainerSortDirection and AuraContainerSortDirection.Reverse) or 0
+
+-- 加载 Blizzard_AuraContainer（Shingen block.lua:1163-1167 同款）
+-- 不加载的话 CreateFrame 拿不到 CustomAuraContainerTemplate 的完整行为
+local function EnsureAuraContainerLoaded()
+    if C_AddOns and not C_AddOns.IsAddOnLoaded("Blizzard_AuraContainer") then
+        pcall(C_AddOns.LoadAddOn, "Blizzard_AuraContainer")
+    end
+end
+
+local function getDispelCellRect(index)
+    if not blocks or not blocks.groups or not blocks.groups.dispel then return nil end
+    local cell = blocks.groups.start + (index - 1) * blocks.groups.num + blocks.groups.dispel
+    local rect = CyberDeck:GetColorBarCellRect(cell)
+    if rect then rect.cell = cell end
+    return rect
+end
+
+-- 建/更新某个队友的探针
+function CyberDeck:UpdateDispelProbeUnit(index, unit)
+    local rect = getDispelCellRect(index)
+    if not rect then return end
+    local bars = _G.CyberDeckColorBars
+    if not bars then return end
+
+    local probe = dispelProbeUnits[index]
+    if not probe then
+        EnsureAuraContainerLoaded()
+        local container = CreateFrame("AuraContainer",
+            "CyberDeckGroupDispelSlots_" .. index, UIParent, "CustomAuraContainerTemplate")
+        container:SetPoint("TOPLEFT", UIParent, "TOPLEFT", 0, 0)
+        container:SetFrameStrata("TOOLTIP")
+        container:SetFrameLevel(10001)     -- 必须高于色条（10000）
+        pcall(function() container:EnableMouse(false) end)
+        probe = { container = container, slots = {}, unit = nil }
+        dispelProbeUnits[index] = probe
+    end
+    local unitChanged = (probe.unit ~= unit)
+    if unitChanged then
+        probe.unit = unit
+        pcall(function() probe.container:SetUnit(unit) end)
+    end
+
+    -- 每种类型一个 slot（类型名与 Shingen / Decursive 一致：Magic/Curse/Disease/Poison）
+    for t = 1, 4 do
+        local typeName = DISPEL_TYPE_NAMES[t]
+        local key = "CD_DISPEL_" .. index .. "_" .. typeName
+        if not probe.slots[t] then
+            local slotOk = pcall(function()
+                probe.container:AddAuraSlot(key, "HARMFUL", {
+                    sortMethod = DISPEL_SORT_METHOD,
+                    sortDirection = DISPEL_SORT_DIRECTION,
+                    -- 每次新建集合：引擎可能改写原表，导致类型过滤静默失效
+                    candidateFilters = { includeDispelTypes = { [typeName] = true } },
+                    initializeFrame = function(button)
+                        -- 1) 按钮尺寸精确到一格 + 裁剪子级
+                        pcall(function() button:EnableMouse(false) end)
+                        pcall(function() button:SetMouseMotionEnabled(false) end)
+                        button:SetSize(rect.w, rect.h)
+                        button:SetClipsChildren(true)
+                        -- 2) 绝对定位到色条那一格
+                        button:ClearAllPoints()
+                        button:SetPoint("TOPLEFT", bars, "TOPLEFT", rect.x, 0)
+                        button:SetFrameLevel(probe.container:GetFrameLevel() + 1)
+                        -- 3) 像素格 = 按钮的子 Frame，纹理建在 cell 里
+                        local cell = CreateFrame("Frame", nil, button)
+                        cell:SetSize(rect.w, rect.h)
+                        cell:SetPoint("TOPLEFT", button, "TOPLEFT", 0, 0)
+                        cell:SetClipsChildren(true)
+                        cell:EnableMouse(false)
+                        local tex = cell:CreateTexture(nil, "OVERLAY")
+                        tex:SetAllPoints(cell)
+                        tex:SetColorTexture(1, 1, 1, 1)   -- 白色，颜色全由曲线提供
+                        tex:Show()
+                        -- 登记给引擎，由它按 debuff 类型染色
+                        pcall(function()
+                            button:ClearDispelTypeTextures()
+                            button:AddDispelTypeTexture(tex, {
+                                showIcon = false,
+                                showWhenHarmful = true,
+                                showWhenHelpful = false,
+                                showWithoutDispelType = false,
+                                style = Enum.CustomAuraButtonDispelTypeTextureStyle.PreserveAsset,
+                                customDispelColorCurve = dispelCurve,
+                            })
+                        end)
+                    end,
+                })
+            end)
+            probe.slots[t] = slotOk
+        end
+    end
+
+    -- 顺序照抄 Shingen / Decorative：AddAuraSlot 之后再 SetShown/SetEnabled
+    pcall(function() probe.container:SetShown(true) end)
+    pcall(function() probe.container:SetEnabled(true) end)
+
+    -- ★ 重绑候选过滤 + 强制刷新（Retail/Fuyutsui/core/block.lua:945 同款）
+    --   顺序必须是：SetUnit -> SetAuraSlotCandidateFilters -> UpdateAllAuras
+    --   因为 **SetUnit 会把候选过滤冲掉**，不重绑的话槽位会落到「第一个光环」，
+    --   类型就会错（Shingen 注释原话：「过场后重绑全部光环槽的驱散过滤，
+    --   避免槽位落到"第一个光环"」）。
+    --   另外引擎可能改写 candidateFilters 原表，所以每次都新建集合。
+    if unitChanged or probe.needRebind then
+        probe.needRebind = false
+        for t = 1, 4 do
+            local typeName = DISPEL_TYPE_NAMES[t]
+            local key = "CD_DISPEL_" .. index .. "_" .. typeName
+            pcall(function()
+                probe.container:SetAuraSlotCandidateFilters(key, {
+                    includeDispelTypes = { [typeName] = true },
+                })
+            end)
+        end
+        pcall(function() probe.container:UpdateAllAuras() end)
+    end
+end
+
+-- 队友集合变化时重建探针（换人/退队要把旧探针清掉）
+-- 队伍签名：成员或顺序变了就变了
+local function groupSignature()
+    local parts = {}
+    for unit, data in pairs(group or {}) do
+        if data and data.index then
+            parts[#parts + 1] = tostring(unit) .. ":" .. tostring(data.index)
+        end
+    end
+    table.sort(parts)
+    return table.concat(parts, ",")
+end
+
+function CyberDeck:SyncDispelProbes()
+    if not group or not blocks or not blocks.groups then return end
+    -- 队伍构成/顺序变了 -> 所有探针都要重绑候选过滤
+    -- （SetUnit 会冲掉过滤，且引擎会改写 candidateFilters 原表）
+    local sig = groupSignature()
+    if sig ~= self.dispelProbeSig then
+        self.dispelProbeSig = sig
+        for _, probe in pairs(dispelProbeUnits) do
+            probe.needRebind = true
+        end
+    end
+    for index, probe in pairs(dispelProbeUnits) do
+        local data = group and group[probe.unit]
+        if not data or data.index ~= index then
+            pcall(function() probe.container:Destroy() end)
+            dispelProbeUnits[index] = nil
+        end
+    end
+    for unit, data in pairs(group or {}) do
+        if data and data.index then
+            self:UpdateDispelProbeUnit(data.index, unit)
+        end
+    end
+end
+
+-- 过场后光环缓存可能失效，强制重绑一次（Shingen 注释：过场后要重绑全部过滤）
+function CyberDeck:MarkDispelProbesRebind()
+    for _, probe in pairs(dispelProbeUnits) do
+        probe.needRebind = true
+    end
+end
+
+-- 轮询刷新所有队友的驱散格
+-- UNIT_AURA 受限时可能不触发（payload 全 secret），所以不能只靠事件驱动。
+function CyberDeck:updateDispelCells()
+    if not group then return end
+    for unit in pairs(group) do
+        writeDispelCell(unit)
+    end
+end
+
 function CyberDeck:UNIT_AURA(_, unit, info)
     local obj = group[unit]
     if not obj then return end
-    -- 队友侧的「驱散」格由引擎染色（见 UpdateDispelProbeUnit），
-    -- 这里**不再写**那一格 —— 否则会盖掉引擎染上去的值。
+    writeDispelCell(unit)
     if safeTruthy(info.isFullUpdate) then
         self:updateUnitFullAura(unit)
         return
@@ -1999,9 +2053,9 @@ function CyberDeck:OnUpdate(elapsed)
         self:updateItemCoolDown()
         self:UpdateForeverAuras()
         self:UpdateForeverAutoAttack()
-        -- 驱散探针同步：保证色条上「驱散」那几格的 AuraContainer
-        -- 建好并指向当前队友（战斗中靠引擎染色把类型画进色条）
-        self:SyncDispelProbes()
+        self:updateDispelCells()
+        -- 引擎染色探针：每个队友 x 每种类型一个 slot
+        if self.SyncDispelProbes then self:SyncDispelProbes() end
         self.timeElapsed = 0
     end
 end
