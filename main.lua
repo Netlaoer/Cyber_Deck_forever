@@ -1889,7 +1889,7 @@ function CyberDeck:UpdateDispelProbeUnit(index, unit)
                         tex:SetColorTexture(1, 1, 1, 1)   -- 白色，颜色全由曲线提供
                         tex:Show()
                         -- 登记给引擎，由它按 debuff 类型染色
-                        pcall(function()
+                        local okReg, errReg = pcall(function()
                             button:ClearDispelTypeTextures()
                             button:AddDispelTypeTexture(tex, {
                                 showIcon = false,
@@ -1900,6 +1900,12 @@ function CyberDeck:UpdateDispelProbeUnit(index, unit)
                                 customDispelColorCurve = dispelCurve,
                             })
                         end)
+                        if not okReg and not CyberDeck.dispelProbeWarned then
+                            -- 静默失败会让人以为「引擎染色没生效」，必须提示一次
+                            CyberDeck.dispelProbeWarned = true
+                            self:Print(("|cffff0000驱散探针注册失败|r（战斗中无法染色）: %s")
+                                :format(tostring(errReg)))
+                        end
                     end,
                 })
             end)
