@@ -129,10 +129,18 @@
 > 直接拿颜色，蓝通道就是类型号，写进像素即可（正式服 `main.lua:1348-1361`）。
 > 不需要自己遍历光环、求值、算类型号。
 >
-> ⚠️ **战斗中仍然读不到**：`GetAuraInstanceIDs` 返回 nil，前置依赖断了。
-> 实测确认（2026-11-22）：引擎染色（`AddDispelTypeTexture`）虽然能上色，
-> 但 AuraContainer 的布局完全由引擎接管，尺寸被撑到约 500x360、位置偏移约 70 格，
-> **无法用于像素编码**，已放弃。机制详见 README「十六点五、驱散机制」。
+> **战斗中 Lua 读不到**：`GetAuraInstanceIDs` 返回 nil（插件 tainted，secret 机制拒绝）。
+> 所以战斗中改用**引擎染色**：`AuraContainer` 的 slot + `AddDispelTypeTexture`，
+> 由引擎按 debuff 类型染色。实现照抄 Shingen Forever 版
+> （`AddOns/Shigure-main/Forever/Shingen/core/block.lua`），三个关键点：
+> ① 按钮 `SetSize` 精确到一格 + `SetClipsChildren(true)`
+> （引擎必然把按钮撑大到约 12 格，但一格的 cell 在按钮左上角，裁剪后完整显示）；
+> ② 按钮绝对定位到色条那一格；
+> ③ 像素格建成按钮的**子 Frame**，驱散纹理建在 cell 里
+> （纹理是按钮的间接后代，满足引擎 `direct or indirect descendant` 要求）。
+> 重绑顺序必须是 `SetUnit` → `SetAuraSlotCandidateFilters` → `UpdateAllAuras`
+> （`SetUnit` 会冲掉候选过滤，不重绑则槽位落到「第一个光环」，类型会错）。
+> 详见 README「十六点五、驱散机制」。
 >
 > 另外两点：
 > - **驱散技能必须走 `dynamicSpells`**（`class/Paladin.lua` 的「清洁术」已在里面）。
@@ -162,7 +170,8 @@
 >
 > ⚠️ **目标侧**在战斗中受限时会退回**基线 11**（目标的减益类型读不到，
 > 这条只影响驱邪术 / 神圣愤怒这类「按敌人减益类型选技能」的判断）。
-> **队友侧**：脱战时同样调 C API 拿到精确类型；战斗中读不到，那一格保持上次值。
+> **队友侧**：同样走双通道 —— 脱战由 Lua 调 C API 拿精确类型，战斗��由引擎染色（每个队友 × 每种类型一个 slot，`includeDispelTypes` 分流），
+> 写进的是同一格、同一种编码。
 
 ### 生物类型（驱邪术 / 神圣愤怒）—— 读不到
 

@@ -135,7 +135,11 @@ def _pick_dispel_unit(state_dict, 驱散开关, types): ...  # 挑驱散目标
 
 **驱散技能**：`驱散魔法`、`祛病术`（走动态宏 `@raidN`，按队友施放）
 
-> 脱战时调 `C_UnitAuras.GetAuraDispelTypeColor` 直接把类型写进像素（和正式服 `main.lua:1348-1361` 完全一致）。战斗中光环数据被 secret 化、`GetAuraInstanceIDs` 返回 nil → 那一格保持上次值，**战斗中不驱散**，这是客户端硬限制。机制见 README「十六点五、驱散机制」。
+> **两条通道写同一格、同一种编码**（红0/绿格号/蓝类型号）：
+> - 脱战：Lua 调 `C_UnitAuras.GetAuraDispelTypeColor` 直接拿颜色（和正式服 `main.lua:1348-1361` 完全一致）；
+> - 战斗中：Lua 读不到光环（`GetAuraInstanceIDs` 返回 nil，因为插件 tainted），改由**引擎染色** —— `AuraContainer` 的 slot + `AddDispelTypeTexture`，实现照抄 Shingen Forever 版。
+>
+> 两条通道输出同码，Python 侧零改动。机制见 README「十六点五、驱散机制」。
 
 ---
 
