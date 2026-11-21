@@ -1005,45 +1005,45 @@ python .workbuddy/check_readme.py               # 文档与代码一致
 
 驱散就一件事：**把「队友身上有哪种可驱减益」画进像素，Python 侧据此选人施法。**
 
-### 脱战时：Lua 读光环，算出类型，写进像素
+### 那一格完全交给引擎染色（脱战 / 战斗同一套）
 
 ```lua
--- main.lua
-local function readDispelType(unit)
-    local ids = CyberDeck:GetAuraInstanceIDs(unit, "HARMFUL|RAID_PLAYER_DISPELLABLE", 40)
-    if ids == nil then
-        return nil, "受限"          -- 读不到（光环被 secret 化）
-    end
-    if #ids == 0 then
-        return nil, "ok"             -- 确实没有可驱减益
-    end
-    local b = pickTypeByCurve(unit, ids, dispelCurve)   -- 曲线求值
-    if b then
-        local t = math.floor(b * 255 + 0.5)            -- 蓝通道 = 类型号
-        if t > 0 and t < 10 then return t, "ok" end
-    end
-    return DISPEL_TYPE_UNKNOWN, "ok"   -- 读得到光环但类型算不出来 -> 类型未知
-end
-
-local function getAuraDispelTypeColor(unit)
-    local index = blocks.groups.start + (obj.index - 1) * blocks.groups.num + blocks.groups.dispel
-    local t, st = readDispelType(unit)
-    if st == "受限" then
-        -- 读不到（战斗中光环被 secret 化）：**不写这一格**。
-        -- 引擎会把 debuff 类型直接染到这一格上，写 0 会盖掉它。
-        return
-    end
-    CyberDeck:CreatTexture(index, t and t / 255 or 0)
+-- main.lua: UpdateDispelProbeUnit(index, unit)
+-- 每个「玩家能驱的类型」一个 slot（Decursive 的做法）
+for _, t in ipairs(slotTypes) do
+    local slotOpts = {
+        sortMethod = 0,
+        sortDirection = 0,
+        -- ★ 这个 slot 只认一种类型 —— 引擎填槽时按它过滤
+        candidateFilters = { includeDispelTypes = { [DISPEL_TYPE_NAMES[t]] = true } },
+        initializeFrame = function(ab)
+            -- 这一整段必须在「创建窗口」内做 —— 之后 slot 子树就被拒了
+            local tex = ab:CreateTexture(nil, "OVERLAY")
+            tex:SetPoint("TOPLEFT", UIParent, "TOPLEFT", cx, cy)   -- 精确落在色条那一格
+            tex:SetSize(cw, ch)
+            tex:SetColorTexture(1, 1, 1, 1)                         -- 白色，颜色全由曲线给
+            ab:AddDispelTypeTexture(tex, {
+                showWithoutDispelType = false,                       -- 没减益时隐藏纹理
+                customDispelColorCurve = curve,
+            })
+        end,
+    }
+    c:AddAuraSlot("CD_DISPEL_PROBE_" .. index .. "_" .. t, "HARMFUL", slotOpts)
 end
 ```
 
 色条第 i 格的编码是 `(0, i/255, value)` —— **绿=索引、蓝=值、红=0**，
 Python 侧 `row_data[g] = b` 直接读走。
 
-> ⚠️ **「读不到」必须和「没有」分开**：
-> 受限时**不能往那一格写 0**，否则会盖掉引擎染上去的正确值。
-> 早期版本 `readDispelType` 用 nil 同时表示两种情况，导致战斗中驱散时好时坏
-> （2026-11-21 踩过）。
+| 情况 | 那格的像素 | Python 读到 |
+|------|------------|-----------|
+| 没有可驱减益 | 引擎隐藏纹理 → 露出色条初始色 `(0, i/255, 0)` | `0` |
+| 有可驱减益 | 引擎染成 `(0, i/255, 类型/255)` | `1`魔法 `2`诅咒 `3`疾病 `4`中毒 |
+
+**Lua 侧完全不写这一格** —— 只有一个写入方（引擎），不会再有两条路径抢同一格像素。
+
+> ⚠️ **必须按类型分 slot**：单 slot 不限类型时，队友同时挂着多种类型的减益，
+> 引擎只会挑一种染，挑到哪个取决于引擎内部排序 —— 表现就是「时好时坏」。
 
 ### 唯一的问题：无限服在战斗中把光环 secret 化
 
@@ -1091,18 +1091,14 @@ for t = 1, 4 do
     curve:AddPoint(t, CreateColor(0, cell / 255, t / 255, 1))   -- 魔法/诅咒/疾病/中毒
 end
 curve:AddPoint(5, CreateColor(0, cell / 255, 5 / 255, 1))      -- 其它类型 = 未知
+curve:AddPoint(11, CreateColor(0, cell / 255, 5 / 255, 1))     -- 流血 = 未知
 ```
 
-**像素编码统一是 `(0, 索引/255, 类型/255)`** —— 无论脱战（Lua 写）还是
-战斗中（引擎染），Python 侧读的都是同一根色条、同一套编码，
-**Python 端一行都不用改**。
+**脱战和战斗是同一套** —— 引擎不受限，脱战时它照样能染色，
+所以 Lua 侧那一行都不需要写，也就没有「两条路径抢同一格像素」的问题。
+Python 端读的还是同一根色条、同一套编码，**一行都不用改**。
 
-| 上下文 | 谁算出类型 | 谁来画 |
-|---|---|---|
-| 脱战 | Lua 读光环 → 曲线求值 | Lua `CreatTexture(格索引, t/255)` |
-| 战斗中（受限） | **引擎**按光环类型判定 | 引擎染色条上那一格的纹理 |
-
-### 三个必须记住的坑
+### 四个必须记住的坑
 
 **① 模板必须先加载**
 
@@ -1110,8 +1106,8 @@ curve:AddPoint(5, CreateColor(0, cell / 255, 5 / 255, 1))      -- 其它类型 =
 LoadAddOn("Blizzard_AuraContainer")   -- 不加载的话 CreateFrame 出来的只是普通 frame
 ```
 
-不加载 → `AddAuraSlot` 是 nil → 探针压根建不起来 → 那一格永远是 Lua 写的值
-→ 战斗中读到 0 → **从不驱散**。（2026-11-21 踩过）
+不加载 → `AddAuraSlot` 是 nil → 探针压根建不起来 → 那一格永远是色条初始色
+→ 读到 0 → **从不驱散**。（2026-11-21 踩过）
 
 **② 纹理必须是白色**
 
@@ -1124,6 +1120,15 @@ LoadAddOn("Blizzard_AuraContainer")   -- 不加载的话 CreateFrame 出来的�
 
 x = 1魔法 / 2诅咒 / 3疾病 / 4中毒（Decursive 的 `DC.DTtoBT` 与本插件一致），
 **不是**归一化的 `t/255`。实测引擎取 Disease 时精确落在 x=3 那点。
+
+**④ 每个类型一个 slot，不能只建一个**
+
+单 slot 且 `candidateFilters` 为空时，队友身上同时挂着多种类型的减益，
+引擎只会挑一种染 —— 挑到哪个取决于引擎内部排序，**表现就是「时好时坏」**。
+按类型分流（每个能驱的类型一个 slot）后，命中哪个就是哪个。
+
+Decursive 的对应实现：`Dcr_DebuffsFrame.lua:1232` 建 7 个 slot，
+每个 slot 的 `candidateFilters.includeDispelTypes` 限定自己负责的类型。
 
 ### 第二层：驱散技能必须走动态宏
 
