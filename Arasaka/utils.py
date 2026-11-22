@@ -564,27 +564,41 @@ def count_units_below_health(state_dict, health_threshold):
 
     return count
 
-def get_unit_with_dispel_type(state_dict, dispel_type):
+# 驱散类型号 -> group 里的字段名（Lua 侧每人每种类型一格，值是剩余秒数）
+DISPEL_FIELD_NAMES = {
+    1: "魔法",
+    2: "诅咒",
+    3: "疾病",
+    4: "中毒",
+    11: "流血",
+}
+
+
+def get_unit_with_dispel_seconds(state_dict, field_name):
     """
-    查找拥有指定驱散类型的第一个单位。
-    仅考虑职责不等于 0 的单位。
-    - dispel_type: 驱散类型整数 。
-    - group 中 驱散 字段为 type: int。
+    查找身上有指定类型可驱减益、且剩余时间大于 0 的第一个队友（按槽位顺序）。
+
+    - field_name: "魔法" / "诅咒" / "疾病" / "中毒" / "流血"
+      （Lua 侧每个类型一格：0 = 没有，1 = 不足一秒，255 = 永久/超 255 秒）
+    - 仅考虑职责不等于 0 的单位。
+
     返回 (slot_key, unit_data) 或 (None, None)，slot_key 为 "1"～"30"。
     """
     group = state_dict.get("group") or {}
-    for key, data in group.items():
+    for key in sorted(group.keys(), key=lambda k: int(k) if str(k).isdigit() else 0):
+        data = group.get(key)
         if not isinstance(data, dict):
             continue
         if not _role_not_zero(data):
             continue
-        val = data.get("驱散")      
-        if val is not None:
-            try:
-                if int(val) == dispel_type:
-                    return key, data
-            except (TypeError, ValueError):
-                pass
+        val = data.get(field_name)
+        if val is None:
+            continue
+        try:
+            if int(val) > 0:
+                return key, data
+        except (TypeError, ValueError):
+            pass
     return None, None
 
 
@@ -617,6 +631,10 @@ _VK = {
     "NUMPADMINUS": 0x6D,
     "NUMPADMULTIPLY": 0x6A,
     "NUMPADDIVIDE": 0x6F,
+    # 40 人扩位用的 7 个主键（与 core/macro.lua 的 keys 尾部一致）
+    "INSERT": 0x2D, "HOME": 0x24, "END": 0x23,
+    "PAGEUP": 0x21, "PAGEDOWN": 0x22,
+    "UP": 0x26, "DOWN": 0x28,
 }
 
 # 单字符到 VK 的常用映射（与 keymap 中 CTRL-, 等一致）

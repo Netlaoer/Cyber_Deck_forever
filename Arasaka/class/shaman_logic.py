@@ -11,7 +11,7 @@ from utils import get_hotkey
 
 # 萨满驱散能力：净化术(526) 驱诅咒；祛病术(2870) 驱疾病
 # 注意：无限服萨满没有「清毒术」（只有「清毒图腾」）
-DISPEL_TYPES = (2, 3)
+DISPEL_TYPES = ("诅咒", "疾病")
 
 HEAL_LOW = 60
 AOE_3 = 3
@@ -142,60 +142,22 @@ def _reset_upkeep():
     _upkeep_state.clear()
 
 
-def _pick_unknown_dispel_unit(state_dict):
-    """受限降级：在「驱散字段 = 5（未知）」的队友里挑血量最低的。
-
-    战斗中光环数据受限，读不到减益的具体类型，Lua 侧会给所有队友写 5。
-    这里只能盲驱 —— 挑血量最低的，因为他最可能身上有减益。
-    驱动散技能只会移除它能驱的类型，队友没减益时这一下是空放。
-    """
-    group = state_dict.get("group") or {}
-    best = None
-    best_pct = None
-    for key, data in group.items():
-        if not isinstance(data, dict):
-            continue
-        if str(data.get("驱散")) != "5":
-            continue
-        role = data.get("职责")
-        try:
-            if role is not None and int(role) == 0:
-                continue
-        except (TypeError, ValueError):
-            pass
-        pct = data.get("生命值")
-        try:
-            pct = int(pct) if pct is not None else 100
-        except (TypeError, ValueError):
-            pct = 100
-        if best_pct is None or pct < best_pct:
-            best, best_pct = key, pct
-    if best is None:
-        return None, None
-    return best, group.get(best)
-
-
 def _pick_dispel_unit(state_dict, 驱散开关, types):
     """挑一个需要驱散（且自己会驱）的队友。
 
-    types 是本职业能驱的类型元组（如 (1, 3, 4)）。
+    types 是本职业能驱的**像素字段名**元组（如 ("魔法", "疾病")），
+    对应 group 里每人一格剩余秒数：> 0 表示身上有这类可驱减益
+    （1 = 不足一秒，255 = 永久/超 255 秒）。
     返回 (slot_key, unit_data) 或 (None, None)。
     """
-    from utils import get_unit_with_dispel_type
+    from utils import get_unit_with_dispel_seconds
     if not 驱散开关:
         return None, None
-    for t in types:
-        slot, data = get_unit_with_dispel_type(state_dict, t)
+    for field in types:
+        slot, data = get_unit_with_dispel_seconds(state_dict, field)
         if slot:
             return slot, data
-    # 战斗中光环数据受限（secret），读不到减益的具体类型，
-    # Lua 侧会写 5（未知但确实有减益）-> 这里盲驱血量最低的队友。
-    slot, data = _pick_unknown_dispel_unit(state_dict)
-    if slot:
-        return slot, data
     return None, None
-
-
 
 def _skill(ctx, name, unit=None):
     if not ctx.ready(name):

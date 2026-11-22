@@ -15,7 +15,7 @@ AI_INSTRUCTION（AI 必读）：
 3. 核心原则：直接修改对应文件。Lua 端编辑 Cyber_Deck 目录下文件，Python 端编辑 Arasaka/ 下文件。
 4. 完成代码修改后，必须同步更新本文件中对应的章节。
 5. 像素块名称、状态字段、GUI 文本统一使用中文。
-6. 新增像素块索引从 210 起（1~57 单体字段、58~207 队伍块、208~209 预留）。
+6. 新增像素块索引要避开队伍块区间：区间 = `start+1 .. start+40*num`（raid 上限 40 人，各职业不同，见 `Progress/<职业>.md`）。总线容量 510。
 7. **职业专属内容写在 `Progress/<职业>.md`**，不要写进本文件。本文件只放通用架构与机制。
 -->
 <!-- AI: Before making any changes to this project, read this entire file first. After completing code changes, you MUST update the corresponding sections in this file. -->
@@ -320,8 +320,8 @@ char = { level, aoeMode, cooldowns, dpsMode, delay, potion,
 | `count_units_with_aura(state_dict, aura_name)` | 有该 buff 的人数 |
 | `count_units_without_aura_below_health(...)` | 缺该 buff 且血低于阈值的人数 |
 
-**统一约定**：只统计 `职责 != 0` 的单位；`state_dict["group"]` 的键是 `"1"`~`"30"`，字段为
-`生命值 / 职责 / 驱散 / 光环`（`光环` 是 `{名称: 剩余秒}` 字典）。
+**统一约定**：只统计 `职责 != 0` 的单位；`state_dict["group"]` 的键是 `"1"`~`"40"`（`config.group.units` 可收窄），字段为
+`生命值 / 职责 / 魔法 / 疾病 / 中毒 / 光环`（驱散字段是剩余秒数，`光环` 是 `{名称: 剩余秒}` 字典）。
 
 ### 职业逻辑统一接口
 
@@ -412,10 +412,12 @@ state_dict = {
     "专精": str,          # 专精名称
     "spells": { "法术名": 冷却值 },  # 0=就绪；键名 = 技能中文名
     "group": {
-        "1": {                       # 键是队友序号 "1"~"30"
+        "1": {                       # 键是队友序号 "1"~"40"
             "生命值": int,           # 血量%
             "职责": int,             # 1=坦克 2=治疗 3=输出 0=不计
-            "驱散": int,             # 需要驱散的类型（1 魔法 2 诅咒 3 疾病 4 中毒 5=未知）
+            "魔法": int,             # 该类型减益的剩余秒数（0=没有 1=不足一秒 255=永久）
+            "疾病": int,
+            "中毒": int,
             # …该职业的队友追踪字段（光环秒数之类），由 group 段配置决定
         },
         ...
@@ -427,7 +429,7 @@ state_dict = {
 > **怎么知道某个字段属于哪一类**：全局 state 段在 `config.yml` 顶层，是所有职业共用的；
 > 职业段在 `<职业ID>/<专精ID>` 下，各职业可以自由定义。
 > **新增字段时三处同步**：Lua 块定义（`class/<职业>.lua`）→ `config.yml` 字段 → Python 读取。
-> 用 `.workbuddy/check_integrity.py` 查断链。
+> 断链排查靠 `_work/test_layouts_all.py`（Lua 块 ↔ `config.yml` 字段 ↔ 510 容量 ↔ 队伍区间不重叠）。
 
 ### 关键约定
 
@@ -437,7 +439,7 @@ state_dict = {
 | 目标类型 | 0=无/超距/死亡, 1~10=敌对, 11~20=友善（1/11 为基线，其余为可驱散细分） |
 | 队伍类型 | 0=单人, 1-40=团本, 46=大秘 |
 | 职业ID | 1=战士 2=圣骑 3=猎人 4=盗贼 5=牧师 6=DK 7=萨满 8=法师 9=术士 10=武僧 11=德 12=DH 13=唤魔师（无限服只有 1~5、7~9、11 存在） |
-| 驱散类型 | 1=魔法 2=诅咒 3=疾病 4=中毒 **5=未知**（有减益但类型读不到，见下）；**各职业能驱的类型不同**，看 `Progress/<职业>.md` |
+| 驱散（每类型一格） | 剩余秒数：0=没有 1=不足一秒 2~254=秒 255=永久/超 255；圣骑士建 魔法/疾病/中毒 三格，见十六点五 |
 
 ---
 
@@ -459,9 +461,9 @@ state_dict = {
 
 | 文件 | 内容 |
 |------|------|
-| `Arasaka/config.yml` | 圣骑士三系（spec 1/2/3）各一段：全局 state + 专精字段 + spells CD + `group(start:57, num:5)`（生命值/职责/驱散/圣光守望/圣光誓约） |
+| `Arasaka/config.yml` | 圣骑士三系（spec 1/2/3）各一段：全局 state + 专精字段 + spells CD + `group`（神圣 `start:57, num:7` = 生命值/职责/魔法/疾病/中毒/圣光守望/圣光誓约；防护惩戒 `num:5` 无两个光环位） |
 | `Arasaka/class/paladin_logic.py` | 三系决策：神圣（治疗/驱散/圣印）、防护（盾/圣印/审判/奉献）、惩戒（斩杀/圣印/驱散）。**优先级表见 `Progress/paladin.md`** |
-| `Arasaka/keymap/paladin.yml` | 圣印与技能的热键映射（由 `other/gen_paladin_keymap.py` 生成） |
+| `Arasaka/keymap/paladin.yml` | 圣印与技能的热键映射（由 `other/gen_class_keymap.py` 生成，`gen_paladin_keymap.py` 只是等价包装） |
 
 ---
 
@@ -559,27 +561,47 @@ Python 通过 `PostMessage(WM_KEYDOWN/WM_KEYUP)` 向 WoW 窗口发送按键：
 
 ### 验证清单
 
-```
-✓ luac -p <所有 lua 文件>                       # 语法
-✓ py_compile <所有 py 文件>                    # 语法
-✓ yaml.safe_load(config.yml)                   # 配置
-✓ check_class_integration.py  四方一致（class↔config↔keymap↔logic）
-✓ check_integrity.py          五维交叉校验（像素↔config↔Python↔事件↔宏）
-✓ check_readme.py             文档与代码一致
-✓ /cy spec  看专精判定、技能书解析、法术 ID    # 游戏内
-✓ /cy gui    看像素原始值是否与索引表一致      # 游戏内
+**插件内可直接跑的**（随包发布）：
+
+```bash
+# 游戏内
+/cy spec      # 专精判定 / 技能书解析 / 法术 ID
+/cy gui       # 像素原始值是否与索引表一致
+/cy macro     # 宏数量 / 键位总数 / 抽样宏体（宏表改过必看）
+
+# 命令行（需要游戏窗口活着，从像素行读真实数据）
+D:/DevTools/pyenv-re313/Scripts/python.exe Arasaka/check_dispel.py
 ```
 
-**静态交叉校验脚本**：
+**离线回归**（工作区 `_work/`，不随插件发布；全部不需要进游戏）：
 
-| 脚本 | 检查什么 |
-|------|---------|
-| `check_class_integration.py` | **四方一致**：`class/*.lua` ↔ `config.yml` ↔ `keymap/*.yml` ↔ `*_logic.py`（9 职业逐个查） |
-| `check_integrity.py` | 五维交叉校验（**多职业版**）：像素↔config 字段按 step 对齐、Python 读的字段↔config 声明、注册事件↔处理函数、宏↔keymap 热键 |
-| `check_readme.py` | 文档与代码一致（数字声明、职业文档存在性、无用件残留检查） |
-| `audit_redundancy.py` | 单文件未使用 import/函数/常量/变量 + 注释密度 |
-| `audit_crossfile.py` | 跨文件确认（单文件分析会把「被 import 的函数」误报成死代码） |
-| `audit_wrong_deletion.py` | 误删审计：把 git HEAD 的删除逐条对照「无限服 9 职业是否存在」判定 |
+| 脚本 | 检查什么 | 规模 |
+|---|---|---|
+| `test_pixel_e2e.py` | 像素编解码：Lua 编码 → 像素行 → `decode_top_row`；含 510 格、方案边界 255/256、终止格缺失、终止格右端混色、边界混色 | 7 项 |
+| `test_dispel_logic.py` | 圣骑决策链路：字段 → 像素 → 解码 → `state_dict` → `_pick_dispel_unit`；含 `group.units` 收窄 | 15 项 |
+| `test_dispel_all.py` | 牧师/萨满/法师/德鲁伊/圣骑五个有驱散职业的端到端选人 + 「驱不掉的类型不建格」 | 25 项 |
+| `test_layouts_all.py` | 27 个专精：Lua `ClassBlocks` ↔ `config.yml` 一致、块尾 ≤ 510、队伍区间内无其它像素块、区间互不重叠 | 27×6 |
+| `test_macro_budget.py` | 宏位预算：`core/macro.lua` 键表 ↔ `gen_class_keymap.py` 键表同序、每职业占用 ≤ 上限、`keymap/*.yml` 逐行同序 | 9 职业 |
+| `test_macro_gen.lua` | 用桩跑真正的 `CreateMacro`：键位顺序、`@raidN` 宏体、静态槽分界、40 号队友不退回 raid1 | 14 项 |
+| `test_paladin_layout.lua` | 圣骑士三系 `num` / 驱散偏移 / 圣印剩余 338 边界（40 人） | 12 项 |
+| `dump_layouts.lua` | 导出 9 职业 × 27 专精的 `start`/`num`/字段/全部像素键（`test_layouts_all.py` 的数据源） | — |
+| `forever_harness.lua` | 核心逻辑冒烟（`core/*.lua` 的纯逻辑部分，桩化 WoW API） | 34 项 |
+
+一键跑（工作区根目录）：
+
+```bash
+node -e "..."                       # luaparse 语法：19 个 Lua 文件
+HARNESS_DIR="<插件目录>" node run_lua.js forever_harness.lua
+node run_lua.js _work/test_macro_gen.lua
+D:/DevTools/python313/python.exe _work/test_macro_budget.py
+D:/DevTools/pyenv-re313/Scripts/python.exe _work/test_pixel_e2e.py
+D:/DevTools/pyenv-re313/Scripts/python.exe _work/test_layouts_all.py
+cd _work && D:/DevTools/pyenv-re313/Scripts/python.exe test_dispel_logic.py
+cd _work && D:/DevTools/pyenv-re313/Scripts/python.exe test_dispel_all.py
+```
+
+> 两个解释器分工：`python313` 只跑纯 Python（yaml/ast），`pyenv-re313` 带 `mss` 等逆向依赖。
+> `test_pixel_e2e.py` 要 `mss` 之外还 import `GetPixels`，所以用 `pyenv-re313`。
 
 ---
 
@@ -589,8 +611,10 @@ Python 通过 `PostMessage(WM_KEYDOWN/WM_KEYUP)` 向 WoW 窗口发送按键：
 
 1. **直接修改**：所有功能直接编辑对应文件
 2. **中文命名**：像素块、状态字段、GUI 文本
-3. **像素索引**：新增从 210 起。1~15 是全局 state、57 是队伍块起点、58~207 是队伍块
-   （`start=57`、`num=5` 时），**208 之后才安全** —— 新块编号先算队伍块区间，别撞进去
+3. **像素索引**：队伍块区间 = `start+1 .. start+40*num`（raid 上限 40 人；
+   圣骑士神圣 `57`/`7` → 58~337、圣印剩余 338；防护惩戒 `57`/`5` → 58~257；
+   其它职业见各自 `Progress/<职业>.md`）。
+   新块编号先算这个区间，别撞进去。总线容量 510（Shingen 同款分档编码）
 4. **SavedVariables**：新增字段在 `core/core.lua` 的 `defaults.char` 注册
 
 ### Lua 端规则
@@ -639,7 +663,7 @@ Python 通过 `PostMessage(WM_KEYDOWN/WM_KEYUP)` 向 WoW 窗口发送按键：
 | `/cy secrets`（`/cy sec`） | secret 上下文探测（问客户端 `C_Secrets` 谓词），见下方 |
 | `/cy options` / `/cy config` | Ace3 选项面板 |
 | `/cy enable` / `/cy disable` | Ace3 启用/停用插件本体 |
-| `/cy macro` | 打印当前宏列表 |
+| `/cy macro` | 打印宏数量 / 键位总数 / 动态与静态分界，并抽样打印 `s号 + 键位 + 宏体`（宏表改过时用它核对，不用记编号） |
 | `/cy dpsmode` / `manual` / `assistant` | 输出模式切换 ⚠️ **无限服无「一键辅助」，对应像素已删除，命令保留只是不生效** |
 | `/cy message 文本` | 聊天框测试输入 |
 
@@ -992,291 +1016,135 @@ GUI 把像素值分成三块展示，避免语义混淆：
 **改完职业相关代码后跑这几个校验**：
 
 ```bash
-python .workbuddy/check_class_integration.py   # class ↔ config ↔ keymap ↔ logic 四方一致
-python .workbuddy/check_integrity.py            # 五维交叉校验
-python .workbuddy/check_readme.py               # 文档与代码一致
+# class ↔ config ↔ 510 容量 ↔ 队伍区间不重叠（27 个专精逐个查）
+D:/DevTools/pyenv-re313/Scripts/python.exe _work/test_layouts_all.py
+
+# macro.lua ↔ gen_class_keymap.py ↔ keymap/*.yml 逐行同序（改宏表必跑）
+D:/DevTools/python313/python.exe _work/test_macro_budget.py
+
+# logic ↔ config 字段（五个有驱散职业的端到端选人）
+cd _work && D:/DevTools/pyenv-re313/Scripts/python.exe test_dispel_all.py
 ```
 
-改宏表后要重生成 keymap：`python Arasaka/other/gen_class_keymap.py`
+改宏表后要重生成 keymap：`python Arasaka/other/gen_class_keymap.py`（旧的
+`gen_paladin_keymap.py` 现在只是它的包装，两者等价）。
 
 ---
 
 ## 十六点五、驱散机制
 
-驱散就一件事：**把「队友身上有哪种可驱减益」画进像素，Python 侧据此选人施法。**
+驱散就一件事：**把「队友身上有哪种可驱减益、还剩多久」画进像素，Python 侧据此选人施法。**
 
-像素编码和正式服**完全一致**：红=0，绿=格号，蓝=类型号。
+做法**整段照搬 Shingen Forever 版**（`Forever/Shingen/core/block.lua:1148-1386`）：
+每个能驱的类型占一格，蓝通道写「该类型在队友身上最长的剩余秒数」，
+颜色由引擎的**原生计时文字**驱动，Lua 侧完全不读光环。
 
-| 那一格的像素 | Python 读到 | 含义 |
+### 像素编码
+
+队伍块每人 `num` 格，**起始格和 num 每个职业不同**（见 `Progress/<职业>.md`）。
+圣骑士从 57 开始：神圣 7 格 / 防护惩戒 5 格。
+
+| 相对格 | 内容 | 说明 |
 |---|---|---|
-| `(0, 格号, 0)` | `0` | 没有可驱减益 |
-| `(0, 格号, 1)` | `1` | 魔法 |
-| `(0, 格号, 2)` | `2` | 诅咒 |
-| `(0, 格号, 3)` | `3` | 疾病 |
-| `(0, 格号, 4)` | `4` | 中毒 |
+| 1 | 生命值 | 0~100 |
+| 2 | 职责 | 0=无 1=坦 2=治疗 3=输出 |
+| 3 | 魔法 | 剩余秒数 |
+| 4 | 疾病 | 剩余秒数 |
+| 5 | 中毒 | 剩余秒数 |
+| 6/7 | 圣光守望 / 圣光誓约 | 仅神圣 |
 
-> 诅咒（2）虽然会写进去，但圣骑士没有「祛除诅咒」，Python 侧按技能表决定能不能用。
+蓝通道取值（与 Shingen 完全一致）：
 
-### 两条写入通道
-
-同一格、同一编码，两个写入方，按场景分工：
-
-| 通道 | 生效场景 | 原理 |
-|------|---------|------|
-| **Lua 直读** | 脱战 | 调 `C_UnitAuras.GetAuraDispelTypeColor` 直接拿颜色（正式服同款） |
-| **引擎染色** | 战斗中 | `AuraContainer` 的 slot + `AddDispelTypeTexture`，由引擎按 debuff 类型染色 |
-
-两者写入的是同一格、同一种编码，引擎纹理层级（10001）高于色条（10000），
-所以战斗中以引擎值为准，脱战时两者一致（都读到同一个类型）。
-
----
-
-### 通道一：脱战 —— 直接调 C API（正式服写法）
-
-`main.lua` 的 `writeDispelCell(unit)`：
-
-```lua
-local ok, ids = pcall(C_UnitAuras.GetUnitAuraInstanceIDs,
-    unit, "HARMFUL|RAID_PLAYER_DISPELLABLE", 4, 4)
-if not ok or type(ids) ~= "table" then
-    return                              -- 读不到 -> 保持上次的值，不清 0
-end
-if #ids == 0 then
-    CyberDeck:CreatTexture(index, 0)    -- 确实没有
-    return
-end
--- 遍历找第一个「玩家能驱散」的：第一个减益可能正好驱不掉
-for i = 1, #ids do
-    local color = CyberDeck:GetAuraDispelTypeColor(unit, ids[i], dispelCurve)
-    if color and color.b and color.b > 0 then
-        CyberDeck:CreatTexture(index, color.b)
-        break
-    end
-end
-```
-
-曲线 `dispelCurve` 的 x 轴是**类型号**，值 = `(0, 1, 类型/255)`：
-
-```lua
--- updateSpellKnown 里构建
-if dispelCapabilities[i] then
-    dispelCurve:AddPoint(i, CreateColor(0, 1, i / 255, 1))   -- 能驱 -> 蓝通道 = 类型
-else
-    dispelCurve:AddPoint(i, CreateColor(0, 0, 0, 1))         -- 不能驱 -> 全黑
-end
-```
-
-#### 曲线三方对照（已逐行核对）
-
-| | 曲线的 x 轴 | 点的值 | 用途 |
-|---|---|---|---|
-| **本插件** | 类型号 1/2/3/4 | `(0, 1, 类型/255)` | 蓝通道 = 类型号，**给 Python 读数值** |
-| **正式服**（`Cyber_Deck-bak/main.lua:195-205`） | 类型号 1/2/3/4 | `(0, 1, 类型/255)` | **与本插件完全相同** |
-| **Decrecursive**（`Dcr_opt.lua:2357-2364`） | 类型号 1/2/3/4（`dtToBT`） | 用户自定义的边框颜色 | 蓝通道**不固定**，给人眼看 |
-
-类型号来源（Decrecursive `DCR_init.lua:125-134`，与本插件一致）：
-
-```
-魔法 = 1    诅咒 = 2    疾病 = 3    中毒 = 4    （流血 = 11，本插件不用）
-```
-
-**Decrecursive 把同一个 `dsCurve` 同时喂给两条通道**，
-这直接证明了**引擎染色的曲线 x 轴就是驱散类型号**：
-
-```lua
--- Decrecursive.lua:588            C API 通道
-C_UnitAuras.GetAuraDispelTypeColor(Unit, auraInstanceID, D.Status.dsCurve)
--- Dcr_DebuffsFrame.lua:1202     引擎染色通道
-customDispelColorCurve = D.Status.dsCurve
-```
-
-所以本插件的**两条通道用的是同一条 `dispelCurve`**：
-
-| 通道 | 用曲线的方式 |
+| 值 | 含义 |
 |---|---|
-| 脱战（Lua 读） | `GetAuraDispelTypeColor(unit, id, dispelCurve)` |
-| 战斗（引擎染） | `AddDispelTypeTexture(tex, { customDispelColorCurve = dispelCurve })` |
+| 0 | 没有这类减益 |
+| 1 | 有，但不足 1 秒 |
+| 2~254 | 剩余秒数 |
+| 255 | 超过 255 秒 / 永久 |
 
-**输出完全同码** —— 蓝通道都是类型号，Python 端零改动。
+> **每个职业只建自己能驱的类型**，与 Shingen 的 `CollectGroupDispelDefs` 一致
+> （按配置决定建哪些，不是全建）：
+>
+> | 职业 | 驱散格 | 来源技能 |
+> |---|---|---|
+> | 圣骑士 | 魔法 / 疾病 / 中毒 | 清洁术 4987、纯净术 1152 |
+> | 牧师 | 魔法 / 疾病 | 驱散魔法 527、祛病术 988 |
+> | 萨满 | 诅咒 / 疾病 | 净化术 526、祛病术 2870 |
+> | 德鲁伊 | 诅咒 / 中毒 | 解除诅咒 2782、驱毒术 8946 |
+> | 法师 | 诅咒 | 解除次级诅咒 475 |
+> | 战士 / 猎人 / 盗贼 / 术士 | 无（每人 2 格：生命值/职责） | — |
 
-> Decrecursive 的曲线额外有一个 `x=0` 点（正常色），
-> 因为它要用「无驱散类型」的槽显示常态边框；
-> 本插件的 slot 全部 `showWithoutDispelType = false`（无类型就隐藏），
-> 用不到 x=0，因此与**正式服保持一致**（正式服也没有 x=0 点）。
+### 为什么不再用「一格 + 类型号」
 
-**与正式服的唯一差别**：读不到时**不写 0**（保留上次的值），
-因为「读不到 ≠ 没有」，写 0 会把脱战时读到的正确值清掉。
+旧做法是一格里写 debuff 类型号（1 魔法 2 诅咒 3 疾病 4 中毒），
+需要引擎按类型给纹理染色（`AddDispelTypeTexture` + `customDispelColorMap`）。
+战斗中 debuff 类型是 secret，这条链一断整格就是 0，表现就是「脱战能驱、战斗不能驱」。
 
-#### ⚠️ 本客户端的 API 签名和零售不一样
+Shingen 的写法完全绕开类型：**引擎自己算剩余时间并给计时文字上色**。
+插件侧只提供「格子在哪、秒数怎么映射到蓝通道」，不参与任何光环读取，
+所以脱战/战斗是同一套，不存在两条通道抢同一格。
 
-```
-零售   : C_UnitAuras.GetAuraDispelTypeColor(unit, auraInstanceID, curve)   3 参数
-无限服 : C_UnitAuras.GetAuraDispelTypeColor(auraInstanceID, curve)         2 参数
-```
-
-按零售的 3 参数传会报
-`bad argument #3 to '?' (Usage: ...GetAuraDispelTypeColor(auraInstance, curve))`，
-**颜色永远拿不到，那一格永远是 0（脱战也不驱散）**。
-
-`core/forever.lua` 的 `GetAuraDispelTypeColor` 两种签名都试一遍，兼容不同客户端。
-
----
-
-### 通道二：战斗中 —— 引擎染色（AuraContainer）
-
-战斗中 Lua 读不到光环（见下节），但**引擎能读**，
-所以把「驱散」那一格的纹理交给引擎，由它按 debuff 类型染色。
-
-做法照抄 **Shingen Forever 版**（`AddOns/Shigure-main/Forever/Shingen/core/block.lua`
-的 `AnchorAuraPixelButton` / `CreateAuraPixelCell`），三个关键点缺一不可：
+### 三条硬约束（缺一不可）
 
 ```lua
--- 1) 按钮尺寸精确到一格 + 裁剪子级
+-- 1) 每个类型一条 slot，候选过滤只放这一个类型
+probe.container:AddAuraSlot(slotKey, "HARMFUL", {
+    candidateFilters = { includeDispelTypes = { [typeName] = true } },
+    sortMethod = AuraContainerSortMethod.ExpirationOnly,   -- 同类取剩余最长
+    sortDirection = AuraContainerSortDirection.Reverse,
+    initializeFrame = ...,
+})
+
+-- 2) SetUnit 会冲掉候选过滤 -> 换单位后必须重绑再刷新
+probe.container:SetUnit(unit)
+probe.container:SetAuraSlotCandidateFilters(slotKey, { includeDispelTypes = { [typeName] = true } })
+probe.container:UpdateAllAuras()
+
+-- 3) 按钮锚 UIParent 的那一格 + 裁剪子级，cell 子框负责可见范围
 button:SetSize(rect.w, rect.h)
 button:SetClipsChildren(true)
---    引擎必然把按钮撑大（实测 16x16 -> 12 格宽），
---    但一格的 cell 在按钮左上角，裁剪后依然完整显示 -> 不污染左右邻格
-
--- 2) 绝对定位到色条那一格
---    ★ 必须锚 UIParent（container 的父级），不能锚 bars：
---       bars 是 container 的兄弟，不在同一条父链上，
---       引擎接管 AuraContainer 布局时会把按钮拉回 container 自己的坐标系，
---       我们设的位置会被覆盖。
---       colorBars 锚在 UIParent 的 (0,0) 且没有额外 scale，
---       所以 bars 内部坐标与 UIParent 坐标数值相同，rect.x 可直接用。
 button:SetPoint("TOPLEFT", UIParent, "TOPLEFT", rect.x, 0)
-
--- 3) 驱散纹理**直接建在按钮上** + **资产纹理**（照抄 Shingen block.lua:1045-1056）
-local tex = button:CreateTexture(nil, "ARTWORK")
-tex:ClearAllPoints()
-tex:SetPoint("CENTER", button, "CENTER", 0, 0)
-tex:SetSize(rect.w, rect.h)
-tex:SetTexture("Interface\\ChatFrame\\ChatFrameBackground")
-tex:SetVertexColor(1, 1, 1, 1)
-button:AddDispelTypeTexture(tex, {
-    showIcon = false,
-    showWhenHarmful = true,
-    showWhenHelpful = false,
-    showWithoutDispelType = false,
-    style = Enum.CustomAuraButtonDispelTypeTextureStyle.PreserveAsset,
-    customDispelColorMap = MakeDispelColorMap(rect.cell),
-})
 ```
 
-**为什么必须用资产纹理**：
-`style = PreserveAsset` 的语义是「保留资产的原始样式，只改顶点色」。
-纯色纹理（`SetColorTexture`）没有资产，引擎可能染不上 —— 实测表现就是「战斗中没像素」。
-所以纹理用 `SetTexture("Interface\\ChatFrame\\ChatFrameBackground")` +
-`SetVertexColor(1,1,1,1)`，颜色完全交给引擎的 colorMap。
+初始化里建三层：按钮（位置+裁剪）→ cell 子框（一格）→ 底色 `b=1` + `█` 计时文字
+（`button:SetDurationText` + `RemainingDuration` 曲线）。
+没有匹配减益时引擎隐藏整个按钮，露出色条初始色 `(方案号, 序号, 0)` = 「没有」。
 
-**为什么用 colorMap 而不是 curve**：
-`customDispelColorMap` 是「类型名 → 颜色」的映射（Shingen 同款）；
-`customDispelColorCurve` 是「x=类型号 → 颜色」（Decrecursive 同款）。
-两者输出的颜色可以完全等价 —— 本插件的 colorMap 取值
-`(0, 格号/255, 类型号/255)`，与 curve `x=类型 → (0,1,类型/255)` 等价，
-**像素编码不变，Python 端零改动**。
+### 像素总线：255 -> 510 格
 
-**类型色号**（照抄 Shingen `DISPEL_TYPE_COLOR_IDS`）：
+每人 3 格驱散 × 40 人（raid 上限）= 120 格，加上血量/职责/光环，原来的 255 格总线放不下，所以升到 Shingen 同款分档编码：
 
-```
-Magic = 1    Curse = 2    Disease = 3    Poison = 4
-（Shingen 还有 Enrage = 9、Bleed = 11，本插件的 Python 端只认 1~4，不启用）
-```
-
-**单 slot，不用 candidateFilters 分流**：
-一个 slot 就能覆盖所有类型（引擎按 debuff 的实际类型去查 colorMap），
-也避免了「多个 slot 挤在同一格」的相互干扰。
-
-**类型分流**：每个队友 × 每种类型 = 一个 slot，
-`candidateFilters = { includeDispelTypes = { [typeName] = true } }`，
-类型名用 `Magic` / `Curse` / `Disease` / `Poison`
-（与 Shingen、Decursive 一致）。同一格的多个 slot 里，
-引擎只显示「有对应 debuff 的那个」，所以同格最终只有一个颜色。
-
-**调用顺序**照抄 Shingen / Decrecursive：
-`AddAuraSlot` → `SetUnit` → `SetShown` → `SetEnabled`。
-顺序反了引擎会在 slot 还没注册时就开始 layout。
-
-#### 还要抄 Shingen 的这四处
-
-| Shingen 出处 | 内容 | 为什么必须 |
+| 索引 | r 通道 | g 通道 |
 |---|---|---|
-| `block.lua:1163-1167` | `EnsureAuraContainerLoaded()`：`C_AddOns.LoadAddOn("Blizzard_AuraContainer")` | 不加载模板，container 行为不完整 |
-| `block.lua:1379-1380` | `sortMethod = AuraContainerSortMethod.ExpirationOnly` / `sortDirection = AuraContainerSortDirection.Reverse` | 用引擎的**全局枚举表**（不是 `Enum.` 命名空间），排序才按剩余时间 |
-| `block.lua:719-731` | `candidateFilters` **每次新建集合** | 引擎可能改写原表，导致类型过滤**静默失效** |
-| `block.lua:765-770` | `SetMouseMotionEnabled(false)` + `EnableMouse(false)` | 探针不抢鼠标 |
-| `Retail/block.lua:945` | **重绑顺序**：`SetUnit` → `SetAuraSlotCandidateFilters` → `UpdateAllAuras` | **`SetUnit` 会冲掉候选过滤**，不重绑则槽位落到「第一个光环」，类型会错 |
-| `Retail/block.lua:946-960` | `RebindContainerSpellFilters(container, unit)` | 换人 / 过场后重绑全部过滤 |
+| 1..255 | 0 | 序号/255 |
+| 256..510 | 1/255 | (序号-255)/255 |
+| 511 | 纯红 (1,0,0) | 终止格，消费端读到即停 |
 
-#### 重绑的实现
+`1..255` 的编码**完全不变**，原有索引和 config.yml 不用动；
+读取端改成「按格中心采样」（`GetPixels.decode_top_row`），
+510 格时每格只有 ~3.5 物理像素，逐像素解码会被边界混色污染。
 
-```lua
--- UpdateDispelProbeUnit 里（unit 变了或标记了 needRebind 时）
-probe.container:SetUnit(unit)                       -- ① 换单位
-for t = 1, 4 do
-    probe.container:SetAuraSlotCandidateFilters(key, {
-        includeDispelTypes = { [typeName] = true },   -- ② 重绑过滤（每次新建集合）
-    })
-end
-probe.container:UpdateAllAuras()                   -- ③ 强制重新分配光环
+### 读取端（Python）
+
+`Arasaka/GetPixels.py` 的 `decode_top_row`：
+
+1. 找起点：`(0,1,0)`（1 号格 = 锚点，恒为 0）
+2. 找终点：连续的纯红 `(1,0,0)` 段的**最后一个**像素（少算 2px 就会整体错一格）
+3. 行宽 `W = end - start + 1`，按 `start + (2i-1)*W/(2*511)` 逐格取中心
+4. 严格校验解出的 `(r,g)` 与索引吻合才采信，混合像素直接丢弃
+
+决策层：`utils.get_unit_with_dispel_seconds(state_dict, "魔法")` 找剩余秒数 > 0 的队友，
+`paladin_logic._pick_dispel_unit` 按 **魔法 > 疾病 > 中毒** 的顺序选人。
+「类型未知盲驱」逻辑已删除（不再有 5 = 未知 这种值）。
+
+### 排查
+
+```bash
+D:/DevTools/pyenv-re313/Scripts/python.exe Arasaka/check_dispel.py
 ```
 
-**什么时候需要重绑**：
-
-| 触发 | 处理 |
-|------|------|
-| 换人 / 队友顺序变化 | 队伍签名（`unit:index` 排序拼接）比对，变了就标记所有探针重绑 |
-| 过场（`PLAYER_ENTERING_WORLD`） | `MarkDispelProbesRebind()` 强制重绑 |
-
-所以 `SyncDispelProbes` 可以挂在 0.12 秒档而不会造成性能问题 ——
-只有真正需要时才调 `UpdateAllAuras`。
-
-#### Shigure 的编码差异（我们保持自己的）
-
-Shingen 的驱散格是**每种类型各占一格**（"魔法"/"诅咒"/"疾病"/"中毒"/"流血"），
-格子里用 `button:SetDurationText` 绑定引擎的原生剩余时间文字。
-
-本插件压缩成**一格、蓝通道 = 类型号**，与正式服的 C API 路径**完全同码**，
-这样脱战（Lua 读）和战斗（引擎染）写的是同一格同一种编码，Python 端零改动。
-
----
-
-### 战斗中为什么 Lua 读不到（客户端硬限制）
-
-错误原文：
-
-```
-Auras cannot be accessed when secret while tainted by 'Cyber_Deck'
-```
-
-关键词是 **`tainted by 'Cyber_Deck'`** —— 是**插件自身被污染**，
-不是「战斗中所有插件都不能读」。
-
-- 脱战不检查 taint，所以**脱战能读**；
-- 战斗中 secret 机制对 tainted 插件拒绝访问光环，**读不到**；
-- 引擎染色**不受 taint 影响**（`AddAuraSlot` 不是受保护操作），所以战斗中只能用它。
-
-零售正式服（12.0）没有这么严，同样代码可用 —— 这是 Forever 客户端的差异。
-
----
-
-### 已排除的方案
-
-下面这些**具体做法**都试过、走不通，记下来避免重蹈：
-
-| 尝试 | 结果 |
-|---|---|
-| 纹理 `SetSize` 一格 | 引擎会重置纹理尺寸（实测设 5.6x2 变成 12 格宽） |
-| 纹理 `SetScale(1/12)` 抵消 | 缩到小于最小渲染阈值，直接不显示 |
-| 缩**按钮**到一格 | 同上，不显示 |
-| **纹理**锚 UIParent 绝对定位 | 不是祖先，被裁剪掉，看不见 |
-| **纹理**锚色条（祖先） | 依然不可见 —— 位置得由**按钮**承担，不能由纹理承担 |
-| 自己遍历光环求值算类型号 | 战斗中同样被 secret 挡住 |
-
-结论：**引擎染色的块最小约 12 格宽，尺寸和位置都不可控**。
-可行的解法是「**按钮**负责位置 + `SetClipsChildren` + cell 负责可见范围」——
-按钮锚到色条那一格（位置精确），纹理建在按钮的子 Frame 里并被裁剪回一格（尺寸可控）。
-这正是上面「通道二」的做法（与 Shingen 一致）。
+打印每个槽位的 `生命值 / 职责 / 魔法 / 疾病 / 中毒` 与对应格号，
+以及每格中心解出来的值。某项该有值却是 0，就看这一格是不是没建槽（`/cy gui` 看色条）。
 
 ### 第二层：驱散技能必须走动态宏
 
@@ -1357,7 +1225,7 @@ D:/DevTools/pyenv-re313/Scripts/python.exe Arasaka/check_dispel.py
 | 读目标距离 | `main.lua:updateTargetRangeBlock`（LibRangeCheck） | 像素 `目标距离`，单位码 |
 | 判断该不该放地面 AoE | `main.lua:updateEnemyCount` 的 `enemyCount5y` | 像素 `5码敌人`（41 号）= 姓名版里 ≤5 码且战斗中的人数；**依赖姓名版开启** |
 | 读目标类型（敌对/友善） | `main.lua:updateTargetType` + `updateTargetValid` | `目标类型`：0 无/超距/死亡，1~10 敌对，11~20 友善 |
-| 读队伍某人血量/职责/驱散 | `main.lua:updateUnitFullAura` + `blocks.groups` | Python 侧直接用 `state_dict["group"]` |
+| 读队伍某人血量/职责/驱散 | `blocks.groups.dispelCells` + `state_dict["group"]` 的 魔法/疾病/中毒 | Python 侧直接用 `state_dict["group"]` |
 | 读药水 / 治疗石冷却 | `core/forever.lua` 的 `itemGroups` + `itemBlocks` | 像素名 `大红冷却` / `大蓝冷却` / `治疗石冷却`，物品 ID 用无限服经典 ID |
 | 让某个技能不进冷却区显示 | `config.yml` 职业级 `probe_fields` | 只影响 GUI 显示，像素和决策数据不动 |
 | 让某组字段单独一个 GUI 分区 | `config.yml` 职业级 `buff_fields` | 同上，读不到该键的一侧（旧 exe）也不受影响 |
@@ -1380,7 +1248,7 @@ D:/DevTools/pyenv-re313/Scripts/python.exe Arasaka/check_dispel.py
 | 找低血队友 / 缺 buff 队友 / 驱散目标 | 25 个 `get_*` / `count_*` 选择器 | `Arasaka/utils.py` |
 | 热键查找与发送 | `get_hotkey()` + `send_key_to_wow()` | `Arasaka/utils.py` |
 | 像素 → state_dict | `build_state_dict()`（含 spells 子字典、group 展开） | `Arasaka/GetPixels.py` |
-| 光环受限（战斗中） | **引擎按 debuff 类型给色条「驱散」格染色**（Decursive 同款）→ Python 照旧从色条读，拿到精确类型 | `main.lua` 的 `UpdateDispelProbeUnit` |
+| 光环受限（战斗中） | **引擎原生计时文字给「驱散」格上色**（Shingen 同款）→ 插件不读光环，脱战/战斗同一套 | `main.lua` 的 `UpdateDispelProbeUnit` |
 | 决策层热重载 | `reload_logic_modules()` | `logic_gui_Tools.py` |
 | 宏体创建 | `loadPlayerMacros()` → `CreateMacro()`（进入世界时一次，无手动命令） | `core/macro.lua` |
 
@@ -1479,9 +1347,9 @@ self.state.specIndex = newSpecIndex
 | 部分怪一个技能都不放 | `_is_enemy` 写成 `目标类型 == 1`，而敌对带可驱散 buff 时是 2~10 | 判区间 `1 <= 目标类型 <= 10` |
 | 队友中毒/疾病了但不驱散 | `main.lua` 的 `dispelAbilities` 里写了**别的版本的法术 ID**，本服是经典 ID，一个都对不上 → `hasLearnedAnySpell` 全 false → 驱散曲线点位被写成 0 → 队友的「驱散」像素恒为 0（**不报错，很难查**） | 能力表按本服实际法术 ID 写；改完用 `/cy gui` 看驱散格的像素值对不对 |
 | 脱战时角色自己按技能 | 把「维持 buff」写成无 `战斗` 条件的兜底分支，脱战也每 30 秒按一次 | 维持类分支一律加 `战斗 and`，脱战不做任何操作 |
-| 面板显示队友血量变成「100s」 | 新增的计时块落进了队伍块区间，两个 updater 抢同一像素 | 新块编号先算队伍块区间：`start=57`、`num=5` 时是 `58~207`，**208 之后才安全** |
+| 面板显示队友血量变成「100s」 | 新增的计时块落进了队伍块区间，两个 updater 抢同一像素 | 新块编号先算队伍块区间 `start+1 .. start+40*num`，别撞进去 |
 | 以为「打字时会乱按键」要加守卫 | 只 grep 了 `Arasaka/` 就下结论——调度层 `logic_gui_Tools.py` 早就有 `if not sd.get("有效性"): continue` | 查横切逻辑要连调度层一起看；职业逻辑里重复判反而会漂移 |
-| 惩戒对着满血怪也放愤怒之锤 | 「目标生命值」像素从来没建过（`class/Paladin.lua` 缺块 + `config.yml` 缺字段）→ Python 读到恒 0 → `目标生命值 <= 20` 恒真 | 新增状态字段要**三处同步**：Lua 块定义 + `config.yml` 字段 + Python 读取；用 `check_integrity.py` 查断链 |
+| 惩戒对着满血怪也放愤怒之锤 | 「目标生命值」像素从来没建过（`class/Paladin.lua` 缺块 + `config.yml` 缺字段）→ Python 读到恒 0 → `目标生命值 <= 20` 恒真 | 新增状态字段要**三处同步**：Lua 块定义 + `config.yml` 字段 + Python 读取；用 `_work/test_layouts_all.py` 查断链 |
 | 加了职业后选人函数「不存在」 | 删「当前没调用」的代码时把 `Arasaka/utils.py` 的通用选择器一起删了 | 通用工具库不按「当前是否被调用」判断死活；加职业前先确认 `utils.py` 25 个函数齐全 |
 
 ### 17.7 加完功能的自检顺序
@@ -1494,11 +1362,11 @@ self.state.specIndex = newSpecIndex
 python -m py_compile <每个 .py 文件>
 python -c "import yaml; yaml.safe_load(open('Arasaka/config.yml',encoding='utf-8'))"
 
-# 3) 五维交叉校验（抓「像素↔config↔Python」断链）
-python .workbuddy/check_integrity.py
+# 3) 布局/配置断链（像素 ↔ config ↔ 容量 ↔ 区间重叠）
+D:/DevTools/pyenv-re313/Scripts/python.exe _work/test_layouts_all.py
 
-# 4) 误删审计（把 git HEAD 的删除逐条对照「无限服 9 职业是否存在」判定）
-python .workbuddy/audit_wrong_deletion.py
+# 4) 宏位与 keymap 顺序（抓「点了没反应」这类静默故障）
+D:/DevTools/python313/python.exe _work/test_macro_budget.py
 ```
 
 > 只跑语法检查会漏掉「函数被吞并」「分支被挡死」「配置断链」这类结构性问题。

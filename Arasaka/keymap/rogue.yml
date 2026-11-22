@@ -1,6 +1,6 @@
 # 由 Arasaka/other/gen_class_keymap.py 生成，勿手改；改 class/Rogue.lua 后重跑。
 # 宏位与 core/macro.lua 的 macroKind 顺序一致（修饰键 x 键位）。
-# 前 0 个是动态技能（unit 1-30 = @raidN / @partyN-1），后面是静态技能（unit 0）。
+# 前 0 个是动态技能（unit 1-40 = @raidN / @partyN-1），后面是静态技能（unit 0）。
 
 1: {unit: 0, 技能: "消失", 热键: "CTRL-NUMPAD1"}
 2: {unit: 0, 技能: "闷棍", 热键: "CTRL-NUMPAD2"}

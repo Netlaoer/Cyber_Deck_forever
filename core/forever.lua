@@ -835,7 +835,7 @@ end
 --   无限服 : C_UnitAuras.GetAuraDispelTypeColor(auraInstanceID, curve)   ← 只有 2 个参数
 --   实测（2026-11-22）：按零售的 3 参数传会报
 --   "bad argument #3 to '?' (Usage: ...GetAuraDispelTypeColor(auraInstance, curve))"
---   -> 颜色一直拿不到，驱动散格永远是 0（脱战也不驱散）。
+--   -> 颜色一直拿不到，「目标类型」像素永远退回基线（队友驱散格已不走这里）。
 --   两种签名都试一遍，兼容不同客户端。
 function F:GetAuraDispelTypeColor(unit, auraInstanceID, curve)
     if not C_UnitAuras.GetAuraDispelTypeColor then return nil end

@@ -48,8 +48,8 @@
 | 48~49 | 神圣之盾 / 神恩术（冷却 + 是否学会） |
 | 50~56 | 七种圣印「是否学会」探测：50 正义 51 命令 52 十字军 53 光明 54 智慧 55 愤怒 56 公正 |
 | **57** | 队伍块 `start`（是起始偏移，队友 1 的生命值落在 58） |
-| **58~207** | 队伍块：每人 **5 格**（生命值 / 职责 / 驱散 / **圣光守望** / **圣光誓约**），30 人 × 5 = 150 |
-| **208** | 圣印剩余秒（`type = "aura"`，auras 计时写入，0 = 没挂/到期） |
+| **58~337** | 队伍块：每人 **7 格**（生命值 / 职责 / **魔法 / 疾病 / 中毒** / 圣光守望 / 圣光誓约），40 人 × 7 = 280（raid 上限，`updateGroup` 不封顶）；防护惩戒 5 格 → 58~257 |
+| **338** | 圣印剩余秒（`type = "aura"`，auras 计时写入，0 = 没挂/到期） |
 
 > **编号已压缩，无空洞**。以前 9/10/27/33-35/43/50-57/61-64 这些空位都填上了；
 > 现在只有 44/45（圣光术/圣光闪现）内容作废，但编号仍占着；
@@ -75,7 +75,7 @@
 |------|------|------|
 | 1 | 生命值 | % |
 | 2 | 职责 | 1 坦克 2 治疗 3 输出 0 不计 |
-| 3 | 驱散 | 需要驱散的类型（见下） |
+| 3~5 | 魔法 / 疾病 / 中毒 | 该类减益的剩余秒数（0=没有 1=不足一秒 255=永久） |
 | 4 | 圣光守望 | 剩余秒 |
 | 5 | 圣光誓约 | 剩余秒 |
 
@@ -117,61 +117,27 @@
 | 11 | 流血 | 无 | 0 |
 
 > ⚠️ **必须写经典 ID**。别的版本的 ID（213634 / 213644 / 365585…）在本服一个都不存在。
-> 写错的后果：`hasLearnedAnySpell` 全 false → 曲线点位被写成 0 → 队友的「驱散」像素恒为 0
-> → Python 永远匹配不到人 → **驱散永不触发**（且不报错，很难查）。
+> 写错的后果：`hasLearnedAnySpell` 全 false → `target.friendCurve` 变黑 → **目标侧**「目标类型」像素
+> 判不出可驱类型（不影响队友侧，队友侧按职业配置建槽，与能力表无关）。
 >
-> 改完用 `/cy gui` 看驱散格的像素值：类型 1/3/4 应非 0，类型 2（诅咒）本服不可达。
+> 改完用 `/cy gui` 看队伍块的 魔法/疾病/中毒 三格：身上有对应减益时应当是剩余秒数。
 >
 > ⚠️ **战斗中光环数据会受限（secret）** —— 无限服 = Decursive 里的 `DC.FOREVER`。
-> 战斗 / 首领战中 `GetAuraDispelTypeColor` 返回黑色，减益类型读不到。
+> **队友侧（现行做法，照搬 Shingen）**：
+> 每个能驱的类型各占一格（圣骑士：魔法 / 疾病 / 中毒），蓝通道 = 该类型最长剩余秒数。
+> 颜色由 `AuraContainer` 的**原生计时文字**驱动（`button:SetDurationText` +
+> `RemainingDuration` 曲线），插件侧不读光环 —— 所以脱战/战斗同一套，没有 secret 问题。
 >
-> **解法：和正式服完全一致** —— 调 `C_UnitAuras.GetAuraDispelTypeColor(unit, id, dispelCurve)`
-> 直接拿颜色，蓝通道就是类型号，写进像素即可（正式服 `main.lua:1348-1361`）。
-> 不需要自己遍历光环、求值、算类型号。
+> 三条硬约束：每个类型一条 slot 且 `includeDispelTypes` 只放这一个类型；
+> `SetUnit` 后必须 `SetAuraSlotCandidateFilters` 重绑再 `UpdateAllAuras`；
+> 按钮锚 `UIParent` 的那一格 + `SetClipsChildren(true)`，cell 子框负责可见范围。
 >
-> **战斗中 Lua 读不到**：`GetAuraInstanceIDs` 返回 nil（插件 tainted，secret 机制拒绝）。
-> 所以战斗中改用**引擎染色**：`AuraContainer` 的 slot + `AddDispelTypeTexture`，
-> 由引擎按 debuff 类型染色。实现照抄 Shingen Forever 版
-> （`AddOns/Shigure-main/Forever/Shingen/core/block.lua`），三个关键点：
-> ① 按钮 `SetSize` 精确到一格 + `SetClipsChildren(true)`
-> （引擎必然把按钮撑大到约 12 格，但一格的 cell 在按钮左上角，裁剪后完整显示）；
-> ② 按钮绝对定位到色条那一格；
-> ③ 像素格建成按钮的**子 Frame**，驱散纹理建在 cell 里
-> （纹理是按钮的间接后代，满足引擎 `direct or indirect descendant` 要求）。
-> 重绑顺序必须是 `SetUnit` → `SetAuraSlotCandidateFilters` → `UpdateAllAuras`
-> （`SetUnit` 会冲掉候选过滤，不重绑则槽位落到「第一个光环」，类型会错）。
-> 详见 README「十六点五、驱散机制」。
+> 编码：0=没有 / 1=不足一秒 / 2~254=秒 / 255=永久或超 255 秒。
+> 旧的「一格写类型号 + `AddDispelTypeTexture` 染色」方案已废弃
+> （战斗中类型是 secret，染色链一断整格恒 0）。
 >
-> 另外两点：
-> - **驱散技能必须走 `dynamicSpells`**（`class/Paladin.lua` 的「清洁术」已在里面）。
->   放 `staticSpells` 的话 keymap 里只有 `unit: 0`，`get_hotkey(队友槽位, "清洁术")` 查不到 → 不驱散。
-> - **引擎探针按类型分 slot**（每个能驱的类型一个），否则队友同时挂多种减益时
->   引擎只挑一种染，表现就是「时好时坏」。
-
-**法术效果实测**（`wow-forever.gg` 查证）：
-
-| spellID | 名称 | 等级 | 实测效果 |
-|---------|------|------|---------|
-| `4987` | 清洁术 Cleanse | 42 | 驱**中毒 + 疾病 + 魔法**（无诅咒） |
-| `1152` | 纯净术 Purify | 8 | 驱**疾病 + 中毒**（无魔法） |
-
-### 目标侧的类型映射
-
-| 目标类型 | 含义 | 经典圣骑士能驱？ |
-|---------|------|-----------------|
-| 11 | 友善目标，无可驱散减益 | — |
-| 12 | 魔法 | ✓（清洁术） |
-| 13 | 诅咒 | ✗（经典无此能力） |
-| 14 | 疾病 | ✓（清洁术 / 纯净术） |
-| 15 | 中毒 | ✓（清洁术 / 纯净术） |
-
-> Python 侧的判断集是 `(12, 14, 15)` —— **14（疾病）不能漏**，
-> 早期写成 `(12, 13, 15)` 会漏掉疾病，而 13（诅咒）在经典服根本不可达。
->
-> ⚠️ **目标侧**在战斗中受限时会退回**基线 11**（目标的减益类型读不到，
-> 这条只影响驱邪术 / 神圣愤怒这类「按敌人减益类型选技能」的判断）。
-> **队友侧**：同样走双通道 —— 脱战由 Lua 调 C API 拿精确类型，战斗��由引擎染色（每个队友 × 每种类型一个 slot，`includeDispelTypes` 分流），
-> 写进的是同一格、同一种编码。
+> **目标侧**在战斗中仍受限：类型读不到就退回基线 11，
+> 只影响「按敌人减益类型选技能」这类判断（驱邪术 / 神圣愤怒已撤掉）。
 
 ### 生物类型（驱邪术 / 神圣愤怒）—— 读不到
 
@@ -255,7 +221,7 @@ traitNode 探针要求该系天赋有 10 点前置且已点出；没点出时退
 | 3 | 十字军 Seal of the Crusader | 7 | 公正 Seal of Justice (Righteous) |
 | 4 | 光明 Seal of Light | | |
 
-18 号像素给决策层「当前挂的是哪个」，208 号给「还剩几秒」。
+18 号像素给决策层「当前挂的是哪个」，338 号给「还剩几秒」。
 
 ### 计时（core/auras.lua）
 
@@ -306,7 +272,7 @@ aura.expirationTime = GetTime() + aura.duration
 - 低于 50% 是**立即**切，不管当前圣印还剩多久；
 - 回到 50% 以上**不立即取消**，让这颗智慧把剩余时间跑完，下次到期才换回愤怒
   （中途取消等于白丢一个 GCD + 一份回蓝）。
-- 剩余时间优先读 **208 号像素**（auras 计时）；读不到（战斗中 `spellID` 是 secret，
+- 剩余时间优先读 **338 号像素**（auras 计时）；读不到（战斗中 `spellID` 是 secret，
   计时建不起来）时退回本地估算：`SEAL_DURATION(30s) - 距上次下达换智慧的时间`。
 
 候选顺序（取第一个已学会的）：`<50%` 智慧→愤怒→正义；`≥50%` 愤怒→正义→智慧。
@@ -331,7 +297,7 @@ aura.expirationTime = GetTime() + aura.duration
 | **0** | 0s | **补**（到期了） |
 | 6（愤怒），法力 40 | 20s | 换智慧 |
 
-208 号「圣印剩余」只参与一件事：**挂智慧回蓝时判断这颗智慧有没有到期**
+338 号「圣印剩余」只参与一件事：**挂智慧回蓝时判断这颗智慧有没有到期**
 （未到期就保持，别中途取消）。补印不读它，避免刚按完像素还没刷新时被误判成到期。
 
 ---
@@ -362,7 +328,7 @@ aura.expirationTime = GetTime() + aura.duration
 | `_first_known_seal(spells, order)` | 按优先级取第一个已学会的圣印；全落空时退回 `order[0]`，宁可空按一次也不让圣印卡死 |
 | `_prot_seal(spells, mana, current_seal, seal_remaining)` | 防护圣印选择：`<50%` 立即智慧；`≥50%` 且智慧未到期则保持；否则愤怒 |
 | `_ret_seal(spells, mana)` | 惩戒圣印选择（`<25%` 智慧） |
-| `_pick_dispel_unit(state_dict, 驱散开关)` | 魔法 > 疾病 > 中毒，内部已复用 `get_unit_with_dispel_type` |
+| `_pick_dispel_unit(state_dict, 驱散开关)` | 魔法 > 疾病 > 中毒，内部复用 `get_unit_with_dispel_seconds`（按秒数 > 0 选人） |
 
 > **非职业层**：`有效性`（死亡/坐骑/打字/吃喝）由调度层 `logic_gui_Tools.py` 的
 > `_run_logic_loop` 统一 `continue`，职业逻辑里**不要**再判一遍。
@@ -406,13 +372,13 @@ elif 自动攻击 == 0 and _upkeep_ok("开始攻击", 2):
 
 ## 六、按键映射（自动生成）
 
-`Arasaka/keymap/paladin.yml` 由 `Arasaka/other/gen_paladin_keymap.py` 从
-`class/Paladin.lua` 的 `MacrosList` 反推宏位生成，规则与 `core/macro.lua` 的
-`macroKind`（7 组修饰键 × 39 键 = 273）完全一致：
+`Arasaka/keymap/paladin.yml` 由 `Arasaka/other/gen_class_keymap.py` 从
+`class/Paladin.lua` 的 `MacrosList` 反推宏位生成（`gen_paladin_keymap.py` 是等价包装，
+只为兼容旧命令），规则与 `core/macro.lua` 的 `macroKind`（7 组修饰键 × **45** 键 = **315**）完全一致：
 
-- 动态技能 **7 个**（圣光术 / 圣光闪现 / 神圣震击 / 清洁术 / 圣疗术 / 圣光誓约 / **圣光守望**）× 30 = **210** 个宏位，`unit 1-30`；
+- 动态技能 **7 个**（圣光术 / 圣光闪现 / 神圣震击 / 清洁术 / 圣疗术 / 圣光誓约 / **圣光守望**）× **40** = **280** 个宏位，`unit 1-40`；
 - 静态技能 **33 个**（含 `[@mouseover]清洁术`）+ 1 个完整宏体 `/startattack`（静态槽 33），`unit 0`；
-- 合计 **244** 个宏位（7×30 + 34），`macroKind` 上限 273；
+- 合计 **314** 个宏位（7×40 + 34），`macroKind` 上限 **315**（余 1）；
 - 动态宏的 unit 1 宏体是 `/cast [group:raid,@raid1]X;[group:party,@player]X;[@player]X`。
   无限服是 1.12 核心，`[nogroup]`（5.0.4 才有）不认，所以第三段用无条件的 `[@player]` 兜底，
   单人也落在自己身上；
@@ -453,11 +419,12 @@ python Arasaka/other/query_forever.py 4987
 
 - `luac -p`（Lua 5.4）解析全部 Lua 文件通过（不含 `Libs/`）；
 - **决策层回归**（stub 掉 `get_hotkey` 后直接跑 `run_paladin_logic`）：
-  三系基本行为 / 驱散链路（队友驱散像素 1/3/4 → 清洁术）/ 目标驱散（12/14/15 → 清洁术）/
+  三系基本行为 / 驱散链路（队友 魔法·疾病·中毒 秒数 → 清洁术）/ 目标驱散（12/14/15 → 清洁术）/
   斩杀判定（满血 → 审判，残血 → 愤怒之锤）/ 失败重试（像素 27 → 制裁之锤）全过；
-- **五维交叉校验**（`.workbuddy/check_integrity.py`）：像素↔config↔Python 无断链；
-- **误删审计**（`.workbuddy/audit_wrong_deletion.py`）：git HEAD 的每处删除都对照
-  「无限服 9 职业是否存在」判定过；
+- **布局一致性**（`_work/test_layouts_all.py`）：`class/Paladin.lua` 三系的
+  `start`/`num`/驱散偏移 ↔ `config.yml` ↔ 510 容量 ↔ 队伍区间无重叠；
+- **宏位一致性**（`_work/test_macro_budget.py`）：`macroKind` 45 键 × 7 修饰 = 315、
+  314 个宏位与 `keymap/paladin.yml` 逐行同序；
 - 游戏内 `/cy spec` 看专精/点数/解析到的 spellID，`/cy gui` 核对像素，
   `/cy gui` 看驱散格的像素值，`/cy secrets` 看当前上下文的 secret 限制。
 

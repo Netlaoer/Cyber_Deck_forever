@@ -67,6 +67,120 @@ def _is_rgb_gray_end_marker(b, g, r):
     return r == 200 and g == 200 and b == 200
 
 
+# 队伍可施法人数上限（与 core/macro.lua 的 GROUP_TARGET_LIMIT 一致）：
+#   键位总数 = 7 种修饰 × 46 键 = 322
+#   圣骑士 7 个动态技能 × 40 人 = 280 + 静态/特殊 34 = 314 <= 322  -> 覆盖 40 人
+#   （Shingen 用 26 组左右修饰 × 44 键 = 1143 位；我们只加主键，不动修饰键）
+#   config 的 group.units 可覆盖（1~40），超 40 会被夹住。
+DEFAULT_GROUP_UNITS = 40
+
+TOP_ROW_CAPACITY = 510          # 数据格数（与 core/block.lua 的 BLOCK_CAPACITY 一致）
+TOP_ROW_SCHEME_SPAN = 255       # 每套 255 格，r 通道 = 方案号
+TOP_ROW_DIVISOR = TOP_ROW_CAPACITY + 1   # + 末尾纯红终止格
+
+
+def _px(raw, x):
+    """取第 x 个像素的 (b, g, r)；越界返回 None。"""
+    off = x * 4
+    if off + 2 >= len(raw):
+        return None
+    return raw[off], raw[off + 1], raw[off + 2]
+
+
+def _expected_channels(index):
+    """索引 -> (r, g)：与 Lua EncodeBlockChannels 完全一致。"""
+    scheme = (index - 1) // TOP_ROW_SCHEME_SPAN
+    return scheme, index - scheme * TOP_ROW_SCHEME_SPAN
+
+
+def _find_top_row_end(raw, start_x, width):
+    """
+    从起点向右找纯红终止格，返回终止格**最后一个像素**的 x。
+
+    ★ 终止格在 Lua 侧是 `SetColorTexture(1, 0, 0, 1)`，落到 8bit 是 (255,0,0)，
+      不是 (1,0,0)（1/255 那个红是左侧计数条的标记，别混）。
+    ★ 必须吃掉连续的整段红：终止格在物理屏幕上是 3~4 个像素宽，
+      只取第一颗会把行宽算小 2~3 像素，格中心整体左移 -> 每格错位一格。
+      右端可能和黑底混色成 (127,0,0)，所以扩展条件只要求「红 > 0 且 g=b=0」。
+    ★ 数据格的 g 恒 >= 1（序号从 1 开始），所以 g == 0 不会误伤数据格。
+    """
+    start = None
+    for x in range(start_x + 1, width):
+        px = _px(raw, x)
+        if px is None:
+            return None
+        b, g, r = px
+        # r > 0 即可：数据格的 g 恒 >= 1，所以 (r>0, g=0, b=0) 只可能是终止格；
+        # 这样 1/255 和 1.0 两种写法（8bit 1 或 255）都能认。
+        if g == 0 and b == 0 and r > 0:
+            start = x
+            break
+    if start is None:
+        return None
+
+    end = start
+    for x in range(start + 1, width):
+        px = _px(raw, x)
+        if px is None:
+            break
+        b, g, r = px
+        if g == 0 and b == 0 and r > 0:
+            end = x
+        else:
+            break
+    return end
+
+
+def decode_top_row(raw, width):
+    """
+    解码顶行像素（Shingen 同款分档编码 + 按格中心采样）。
+
+    编码：索引 1..255 -> (r=0, g=序号/255)；256..510 -> (r=1, g=(序号-255)/255)
+    末尾一格纯红（Lua 写 `SetColorTexture(1,0,0)`，落到屏幕是 8bit (255,0,0)）作为行尾。
+
+    ★ 为什么按「格中心」采样而不是逐像素解码：
+      510 格时每格只有 ~3.5 物理像素，格边界的混合像素会被解成相邻格的序号，
+      逐像素写入会把相邻格的数值覆盖掉。中心采样天然跳过边界。
+
+    返回 {索引: 蓝通道值}；找不到起始标记/终止格时返回 {}。
+    """
+    row_data = {}
+    start_x = -1
+    for x in range(min(TOP_ROW_CAPACITY, width)):
+        px = _px(raw, x)
+        if px is None:
+            break
+        b, g, r = px
+        if _is_rgb_green_marker(b, g, r):
+            start_x = x
+            break
+    if start_x < 0:
+        return row_data
+
+    end_x = _find_top_row_end(raw, start_x, width)
+    if end_x is None:
+        # 色条没画完整（UI 未加载/被遮挡）-> 不猜
+        return row_data
+
+    row_width = end_x + 1 - start_x
+    if row_width < TOP_ROW_DIVISOR:
+        return row_data
+
+    for index in range(1, TOP_ROW_CAPACITY + 1):
+        # 格中心：start + (2i-1) * W / (2 * 511)
+        cx = start_x + ((2 * index - 1) * row_width) // (2 * TOP_ROW_DIVISOR)
+        px = _px(raw, cx)
+        if px is None:
+            break
+        b, g, r = px
+        scheme, pos = _expected_channels(index)
+        # 严格校验：只有解码出的 (r,g) 与索引完全吻合才采信，混合像素直接丢弃
+        if r == scheme and g == pos:
+            row_data[index] = b
+
+    return row_data
+
+
 def scan_screen_data(window_title="魔兽世界"):
     """
     两次窄截图分别扫描顶部长条和左边界标记，大幅减少截图数据量。
@@ -93,33 +207,8 @@ def scan_screen_data(window_title="魔兽世界"):
     sct = _get_sct()
 
     # ========== 扫描顶部长条：截取第一行（width × 1）==========
-    row_data = {}
     top_img = sct.grab({"top": base_y, "left": base_x, "width": width, "height": 1})
-    top_raw = top_img.raw
-    top_bytes = len(top_raw)
-    start_x = -1
-
-    for x in range(min(PIXELS_PER_ROW, width)):
-        offset = x * 4
-        if offset + 2 >= top_bytes:
-            break
-        b, g, r = top_raw[offset], top_raw[offset + 1], top_raw[offset + 2]
-        if _is_rgb_green_marker(b, g, r):
-            start_x = x
-            break
-
-    if start_x != -1:
-        for x in range(start_x, width):
-            offset = x * 4
-            if offset + 2 >= top_bytes:
-                break
-            b, g, r = top_raw[offset], top_raw[offset + 1], top_raw[offset + 2]
-            if r == 0 and 1 <= g <= PIXELS_PER_ROW:
-                row_data[g] = b
-                if g == PIXELS_PER_ROW:
-                    break
-            elif g > PIXELS_PER_ROW:
-                break
+    row_data = decode_top_row(top_img.raw, width)
 
     # ========== 扫描左边界标记：截取第一列（1 × height）==========
     bar_data = {}
@@ -338,9 +427,14 @@ def build_state_dict(config, row_data, state_config, class_id=None, spec_id=None
     if group_config and isinstance(group_config, dict):
         start = group_config.get("start", 26)
         num_params = group_config.get("num", 5)
-        NUM_GROUPS = 30
+        try:
+            num_units = int(group_config.get("units", DEFAULT_GROUP_UNITS))
+        except (TypeError, ValueError):
+            num_units = DEFAULT_GROUP_UNITS
+        # 总线最多 510 格，单人格数由 config 决定，40 人是队伍上限（raid 上限）
+        num_units = max(1, min(40, num_units))
         result["group"] = {}
-        for i in range(1, NUM_GROUPS + 1):
+        for i in range(1, num_units + 1):
             base_step = start + (i - 1) * num_params
             sub = {}
             for field_key, field in group_config.items():

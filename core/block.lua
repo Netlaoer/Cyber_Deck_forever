@@ -1,12 +1,31 @@
 local addon, ns = ...
+
+-- 像素总线：与 Shingen Forever 版同款分档编码
+--   索引 1..255   -> r=0,        g=序号/255
+--   索引 256..510 -> r=1/255,    g=(序号-255)/255
+--   索引 511      -> 纯红终止格 (1,0,0)，消费端读到即结束本行扫描
+--
+-- ★ 从 255 格升到 510 格的原因：队伍块要按 Shingen 的做法「每个可驱类型每人一格」，
+--   圣骑士 3 类 x 30 人 = 90 格，加上原有的状态/技能不够放。
+--   1..255 的编码完全不变，已有索引和 config.yml 不用动。
+local BLOCK_SCHEME_SPAN = 255
+local BLOCK_CAPACITY = 510
+
 local screenWidth = GetScreenWidth()
 
 local BLOCK_FIX_CONFIG = {
-    blockCount = 255,               -- 总色块数量
-    blockWidth = screenWidth / 255, -- 色块宽度
-    blockHeight = 2,                -- 色块高度
-    blockSpacing = 0,               -- 色块间距
+    capacity = BLOCK_CAPACITY,                 -- 可写数据格
+    blockCount = BLOCK_CAPACITY + 1,           -- + 末尾终止格
+    blockWidth = screenWidth / (BLOCK_CAPACITY + 1),
+    blockHeight = 2,                           -- 色块高度
+    blockSpacing = 0,                          -- 色块间距
 }
+
+--- 索引 -> (r, g)：r 是方案号，g 是套内序号
+local function EncodeBlockChannels(index)
+    local scheme = math.floor((index - 1) / BLOCK_SCHEME_SPAN)
+    return scheme / 255, (index - scheme * BLOCK_SCHEME_SPAN) / 255
+end
 
 -- 计算 X 偏移
 local function GetXOffset(index, Width, spacing)
@@ -21,7 +40,7 @@ colorBars:SetFrameStrata("TOOLTIP") -- 确保在最上层
 colorBars:SetFrameLevel(10000)
 -- colorBars:Raise()   -- Increases the frame's frame level above all other frames in its strata
 
--- 存储纹理的数组 (1 到 255)
+-- 存储纹理的数组 (1 到 capacity)
 local pixelTextures = {}
 
 -- 获取特定索引的纹理（如果不存在则创建）
@@ -37,17 +56,33 @@ local function creatTextureByIndex(i)
     return pixelTextures[i]
 end
 
+-- 末尾终止格：纯红，不参与索引编码
+local function DrawBlockEndMarker()
+    local tex = creatTextureByIndex(BLOCK_FIX_CONFIG.blockCount)
+    if tex then
+        tex:SetColorTexture(1, 0, 0, 1)
+    end
+end
+
 -- 更新或创建静态色块 (按索引)
 function CyberDeck:CreatTexture(i, b)
+    -- 终止格不参与数据写入，否则消费端找不到行尾
+    if i > BLOCK_FIX_CONFIG.capacity then return end
     local tex = creatTextureByIndex(i)
     if tex then
-        tex:SetColorTexture(0, i / 255, b, 1)
+        local r, g = EncodeBlockChannels(i)
+        tex:SetColorTexture(r, g, b, 1)
     end
+end
+
+-- 索引 -> (r, g)：给引擎探针的计时曲线复用同一套编码（红=方案号，绿=序号）
+function CyberDeck:EncodeBlockChannels(index)
+    return EncodeBlockChannels(index)
 end
 
 -- 取色条第 i 格的位置与尺寸（**色条内部坐标系**）
 --
--- ★ 必须用 BLOCK_FIX_CONFIG.blockWidth（= screenWidth/255 = 7.823），
+-- ★ 必须用 BLOCK_FIX_CONFIG.blockWidth（= screenWidth/511 = 3.904），
 --   并且调用方把宿主 frame 锚在 **UIParent** 上（不是 bars）。
 --
 --   推导（实测）：
@@ -56,15 +91,14 @@ end
 --     两者算出的物理位置一致。
 --     UIParent 的实际渲染 scale = 色条物理宽 / screenWidth
 --                              = 1819 / 1994.8 = 0.9118
---     格 249 -> rect.x = 248 * 7.823 = 1940.1 -> 物理 1940.1 * 0.9118 = 1769
---     （实测探针中心落在 1770，与格 249 的物理位置 1769 吻合 ✓）
+--     格 249 -> rect.x = 248 * 3.911 = 970.0 -> 物理 970.0 * 0.9118 = 884
 --
 --   ★ 为什么锚 UIParent 而不是 bars：
 --     引擎接管的 AuraContainer，其 slot 按钮如果锚在 container 父链之外
 --     （bars 是 container 的兄弟），布局时会被拉回 container 自己的坐标系，
 --     我们设的位置直接失效。Shingen 用的就是 UIParent。
 function CyberDeck:GetColorBarCellRect(i)
-    if not i or i <= 0 or i > BLOCK_FIX_CONFIG.blockCount then return nil end
+    if not i or i <= 0 or i > BLOCK_FIX_CONFIG.capacity then return nil end
     return {
         x = GetXOffset(i - 1, BLOCK_FIX_CONFIG.blockWidth, BLOCK_FIX_CONFIG.blockSpacing),
         y = 0,
@@ -74,14 +108,16 @@ function CyberDeck:GetColorBarCellRect(i)
 end
 
 function CyberDeck:clearAllTextures()
-    for i = 1, BLOCK_FIX_CONFIG.blockCount do
+    for i = 1, BLOCK_FIX_CONFIG.capacity do
         self:CreatTexture(i, 0)
     end
+    DrawBlockEndMarker()
 end
 
-for i = 1, BLOCK_FIX_CONFIG.blockCount do
+for i = 1, BLOCK_FIX_CONFIG.capacity do
     CyberDeck:CreatTexture(i, 0)
 end
+DrawBlockEndMarker()
 
 local c = 255
 local BAR_CONFIG = {

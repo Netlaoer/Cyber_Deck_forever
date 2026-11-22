@@ -69,10 +69,9 @@ state:
       鲁莽: {step: 64, type: "int" }
     group:
       start: 65
-      num: 3
+      num: 2
       生命值: {step: 1, type: "int" }
       职责: {step: 2, type: "int" }
-      驱散: {step: 3, type: "int" }
   2:
     目标生命值: {step: 11, type: "int" }
     施法技能: {step: 18, type: "int" }
@@ -125,10 +124,9 @@ state:
       鲁莽: {step: 64, type: "int" }
     group:
       start: 65
-      num: 3
+      num: 2
       生命值: {step: 1, type: "int" }
       职责: {step: 2, type: "int" }
-      驱散: {step: 3, type: "int" }
   3:
     目标生命值: {step: 11, type: "int" }
     施法技能: {step: 18, type: "int" }
@@ -181,10 +179,9 @@ state:
       鲁莽: {step: 64, type: "int" }
     group:
       start: 65
-      num: 3
+      num: 2
       生命值: {step: 1, type: "int" }
       职责: {step: 2, type: "int" }
-      驱散: {step: 3, type: "int" }
 3: # 猎人（无限服 1.60.1 · 骨架：像素块已配好，决策层尚未实现）
   keymap: "hunter.yml"
   1:
@@ -260,10 +257,9 @@ state:
       猎鹰守护: {step: 85, type: "int" }
     group:
       start: 86
-      num: 3
+      num: 2
       生命值: {step: 1, type: "int" }
       职责: {step: 2, type: "int" }
-      驱散: {step: 3, type: "int" }
   2:
     目标生命值: {step: 11, type: "int" }
     施法技能: {step: 18, type: "int" }
@@ -337,10 +333,9 @@ state:
       猎鹰守护: {step: 85, type: "int" }
     group:
       start: 86
-      num: 3
+      num: 2
       生命值: {step: 1, type: "int" }
       职责: {step: 2, type: "int" }
-      驱散: {step: 3, type: "int" }
   3:
     目标生命值: {step: 11, type: "int" }
     施法技能: {step: 18, type: "int" }
@@ -414,10 +409,9 @@ state:
       猎鹰守护: {step: 85, type: "int" }
     group:
       start: 86
-      num: 3
+      num: 2
       生命值: {step: 1, type: "int" }
       职责: {step: 2, type: "int" }
-      驱散: {step: 3, type: "int" }
 4: # 盗贼（无限服 1.60.1 · 骨架：像素块已配好，决策层尚未实现）
   keymap: "rogue.yml"
   1:
@@ -465,10 +459,9 @@ state:
       毁伤: {step: 57, type: "int" }
     group:
       start: 58
-      num: 3
+      num: 2
       生命值: {step: 1, type: "int" }
       职责: {step: 2, type: "int" }
-      驱散: {step: 3, type: "int" }
   2:
     目标生命值: {step: 11, type: "int" }
     施法技能: {step: 18, type: "int" }
@@ -514,10 +507,9 @@ state:
       毁伤: {step: 57, type: "int" }
     group:
       start: 58
-      num: 3
+      num: 2
       生命值: {step: 1, type: "int" }
       职责: {step: 2, type: "int" }
-      驱散: {step: 3, type: "int" }
   3:
     目标生命值: {step: 11, type: "int" }
     施法技能: {step: 18, type: "int" }
@@ -563,10 +555,9 @@ state:
       毁伤: {step: 57, type: "int" }
     group:
       start: 58
-      num: 3
+      num: 2
       生命值: {step: 1, type: "int" }
       职责: {step: 2, type: "int" }
-      驱散: {step: 3, type: "int" }
 5: # 牧师（无限服 1.60.1 · 骨架：像素块已配好，决策层尚未实现）
   keymap: "priest.yml"
   1:
@@ -635,10 +626,11 @@ state:
       精神祷言: {step: 78, type: "int" }
     group:
       start: 79
-      num: 3
+      num: 4
       生命值: {step: 1, type: "int" }
       职责: {step: 2, type: "int" }
-      驱散: {step: 3, type: "int" }
+      魔法: {step: 3, type: "int" }
+      疾病: {step: 4, type: "int" }
   2:
     目标生命值: {step: 11, type: "int" }
     施法技能: {step: 18, type: "int" }
@@ -705,10 +697,11 @@ state:
       精神祷言: {step: 78, type: "int" }
     group:
       start: 79
-      num: 3
+      num: 4
       生命值: {step: 1, type: "int" }
       职责: {step: 2, type: "int" }
-      驱散: {step: 3, type: "int" }
+      魔法: {step: 3, type: "int" }
+      疾病: {step: 4, type: "int" }
   3:
     目标生命值: {step: 11, type: "int" }
     施法技能: {step: 18, type: "int" }
@@ -775,10 +768,11 @@ state:
       精神祷言: {step: 78, type: "int" }
     group:
       start: 79
-      num: 3
+      num: 4
       生命值: {step: 1, type: "int" }
       职责: {step: 2, type: "int" }
-      驱散: {step: 3, type: "int" }
+      魔法: {step: 3, type: "int" }
+      疾病: {step: 4, type: "int" }
 7: # 萨满祭司（无限服 1.60.1 · 骨架：像素块已配好，决策层尚未实现）
   keymap: "shaman.yml"
   1:
@@ -848,10 +842,11 @@ state:
       激流: {step: 79, type: "int" }
     group:
       start: 80
-      num: 3
+      num: 4
       生命值: {step: 1, type: "int" }
       职责: {step: 2, type: "int" }
-      驱散: {step: 3, type: "int" }
+      诅咒: {step: 3, type: "int" }
+      疾病: {step: 4, type: "int" }
   2:
     目标生命值: {step: 11, type: "int" }
     施法技能: {step: 18, type: "int" }
@@ -919,10 +914,11 @@ state:
       激流: {step: 79, type: "int" }
     group:
       start: 80
-      num: 3
+      num: 4
       生命值: {step: 1, type: "int" }
       职责: {step: 2, type: "int" }
-      驱散: {step: 3, type: "int" }
+      诅咒: {step: 3, type: "int" }
+      疾病: {step: 4, type: "int" }
   3:
     目标生命值: {step: 11, type: "int" }
     施法技能: {step: 18, type: "int" }
@@ -990,10 +986,11 @@ state:
       激流: {step: 79, type: "int" }
     group:
       start: 80
-      num: 3
+      num: 4
       生命值: {step: 1, type: "int" }
       职责: {step: 2, type: "int" }
-      驱散: {step: 3, type: "int" }
+      诅咒: {step: 3, type: "int" }
+      疾病: {step: 4, type: "int" }
 8: # 法师（无限服 1.60.1 · 骨架：像素块已配好，决策层尚未实现）
   keymap: "mage.yml"
   1:
@@ -1069,7 +1066,7 @@ state:
       num: 3
       生命值: {step: 1, type: "int" }
       职责: {step: 2, type: "int" }
-      驱散: {step: 3, type: "int" }
+      诅咒: {step: 3, type: "int" }
   2:
     目标生命值: {step: 11, type: "int" }
     施法技能: {step: 18, type: "int" }
@@ -1143,7 +1140,7 @@ state:
       num: 3
       生命值: {step: 1, type: "int" }
       职责: {step: 2, type: "int" }
-      驱散: {step: 3, type: "int" }
+      诅咒: {step: 3, type: "int" }
   3:
     目标生命值: {step: 11, type: "int" }
     施法技能: {step: 18, type: "int" }
@@ -1217,7 +1214,7 @@ state:
       num: 3
       生命值: {step: 1, type: "int" }
       职责: {step: 2, type: "int" }
-      驱散: {step: 3, type: "int" }
+      诅咒: {step: 3, type: "int" }
 9: # 术士（无限服 1.60.1 · 骨架：像素块已配好，决策层尚未实现）
   keymap: "warlock.yml"
   1:
@@ -1283,10 +1280,9 @@ state:
       末日灾祸: {step: 75, type: "int" }
     group:
       start: 76
-      num: 3
+      num: 2
       生命值: {step: 1, type: "int" }
       职责: {step: 2, type: "int" }
-      驱散: {step: 3, type: "int" }
   2:
     目标生命值: {step: 11, type: "int" }
     施法技能: {step: 18, type: "int" }
@@ -1350,10 +1346,9 @@ state:
       末日灾祸: {step: 75, type: "int" }
     group:
       start: 76
-      num: 3
+      num: 2
       生命值: {step: 1, type: "int" }
       职责: {step: 2, type: "int" }
-      驱散: {step: 3, type: "int" }
   3:
     目标生命值: {step: 11, type: "int" }
     施法技能: {step: 18, type: "int" }
@@ -1417,10 +1412,9 @@ state:
       末日灾祸: {step: 75, type: "int" }
     group:
       start: 76
-      num: 3
+      num: 2
       生命值: {step: 1, type: "int" }
       职责: {step: 2, type: "int" }
-      驱散: {step: 3, type: "int" }
 11: # 德鲁伊（无限服 1.60.1 · 骨架：像素块已配好，决策层尚未实现）
   keymap: "druid.yml"
   1:
@@ -1495,10 +1489,11 @@ state:
       野性赐福: {step: 84, type: "int" }
     group:
       start: 85
-      num: 3
+      num: 4
       生命值: {step: 1, type: "int" }
       职责: {step: 2, type: "int" }
-      驱散: {step: 3, type: "int" }
+      诅咒: {step: 3, type: "int" }
+      中毒: {step: 4, type: "int" }
   2:
     目标生命值: {step: 11, type: "int" }
     施法技能: {step: 18, type: "int" }
@@ -1571,10 +1566,11 @@ state:
       野性赐福: {step: 84, type: "int" }
     group:
       start: 85
-      num: 3
+      num: 4
       生命值: {step: 1, type: "int" }
       职责: {step: 2, type: "int" }
-      驱散: {step: 3, type: "int" }
+      诅咒: {step: 3, type: "int" }
+      中毒: {step: 4, type: "int" }
   3:
     目标生命值: {step: 11, type: "int" }
     施法技能: {step: 18, type: "int" }
@@ -1647,10 +1643,11 @@ state:
       野性赐福: {step: 84, type: "int" }
     group:
       start: 85
-      num: 3
+      num: 4
       生命值: {step: 1, type: "int" }
       职责: {step: 2, type: "int" }
-      驱散: {step: 3, type: "int" }
+      诅咒: {step: 3, type: "int" }
+      中毒: {step: 4, type: "int" }
 2: # 圣骑士（无限服 1.60.1）
   keymap: "paladin.yml"
   # GUI 增益分区名单（class 级，旧版 exe 不会读到，决策层也不受影响）
@@ -1671,7 +1668,58 @@ state:
     5码敌人: {step: 41, type: "int" }
     目标施法: {step: 47, type: "int" }
     圣印: {step: 18, type: "int" }
-    圣印剩余: {step: 208, type: "int" }
+    圣印剩余: {step: 338, type: "int" }
+    自动攻击: {step: 22, type: "int" }
+    神恩术: {step: 23, type: "int" }
+    圣光灌注: {step: 24, type: "int" }
+    正义之怒: {step: 46, type: "int" }
+    spells:
+      制裁之锤: {step: 27, type: "int" }
+      圣盾术: {step: 28, type: "int" }
+      圣佑术: {step: 29, type: "int" }
+      圣疗术: {step: 30, type: "int" }
+      神圣震击: {step: 31, type: "int" }
+      审判: {step: 32, type: "int" }
+      奉献: {step: 33, type: "int" }
+      驱邪术: {step: 34, type: "int" }
+      愤怒之锤: {step: 35, type: "int" }
+      神圣打击: {step: 36, type: "int" }
+      神圣愤怒: {step: 37, type: "int" }
+      清洁术: {step: 42, type: "int" }
+      正义之怒CD: {step: 43, type: "int" }
+      神圣之盾CD: {step: 48, type: "int" }
+      神恩术CD: {step: 49, type: "int" }
+      正义圣印: {step: 50, type: "int" }
+      命令圣印: {step: 51, type: "int" }
+      十字军圣印: {step: 52, type: "int" }
+      光明圣印: {step: 53, type: "int" }
+      智慧圣印: {step: 54, type: "int" }
+      愤怒圣印: {step: 55, type: "int" }
+      公正圣印: {step: 56, type: "int" }
+    group:
+      start: 57
+      num: 7
+      生命值: {step: 1, type: "int" }
+      职责: {step: 2, type: "int" }
+      魔法: {step: 3, type: "int" }
+      疾病: {step: 4, type: "int" }
+      中毒: {step: 5, type: "int" }
+      圣光守望: {step: 6, type: "int" }
+      圣光誓约: {step: 7, type: "int" }
+  2: # 防护
+    目标生命值: {step: 11, type: "int" }
+    施法技能: {step: 19, type: "int" }
+    施法目标: {step: 20, type: "int" }
+    目标距离: {step: 21, type: "int" }
+    敌人人数: {step: 25, type: "int" }
+    爆发开关: {step: 26, type: "int" }
+    大红冷却: {step: 38, type: "int" }
+    延迟: {step: 39, type: "int" }
+    驱散开关: {step: 40, type: "int" }
+    5码敌人: {step: 41, type: "int" }
+    目标施法: {step: 47, type: "int" }
+    圣印: {step: 18, type: "int" }
+    圣印剩余: {step: 338, type: "int" }
     自动攻击: {step: 22, type: "int" }
     神恩术: {step: 23, type: "int" }
     圣光灌注: {step: 24, type: "int" }
@@ -1704,56 +1752,9 @@ state:
       num: 5
       生命值: {step: 1, type: "int" }
       职责: {step: 2, type: "int" }
-      驱散: {step: 3, type: "int" }
-      圣光守望: {step: 4, type: "int" }
-      圣光誓约: {step: 5, type: "int" }
-  2: # 防护
-    目标生命值: {step: 11, type: "int" }
-    施法技能: {step: 19, type: "int" }
-    施法目标: {step: 20, type: "int" }
-    目标距离: {step: 21, type: "int" }
-    敌人人数: {step: 25, type: "int" }
-    爆发开关: {step: 26, type: "int" }
-    大红冷却: {step: 38, type: "int" }
-    延迟: {step: 39, type: "int" }
-    驱散开关: {step: 40, type: "int" }
-    5码敌人: {step: 41, type: "int" }
-    目标施法: {step: 47, type: "int" }
-    圣印: {step: 18, type: "int" }
-    圣印剩余: {step: 208, type: "int" }
-    自动攻击: {step: 22, type: "int" }
-    神恩术: {step: 23, type: "int" }
-    圣光灌注: {step: 24, type: "int" }
-    正义之怒: {step: 46, type: "int" }
-    spells:
-      制裁之锤: {step: 27, type: "int" }
-      圣盾术: {step: 28, type: "int" }
-      圣佑术: {step: 29, type: "int" }
-      圣疗术: {step: 30, type: "int" }
-      神圣震击: {step: 31, type: "int" }
-      审判: {step: 32, type: "int" }
-      奉献: {step: 33, type: "int" }
-      驱邪术: {step: 34, type: "int" }
-      愤怒之锤: {step: 35, type: "int" }
-      神圣打击: {step: 36, type: "int" }
-      神圣愤怒: {step: 37, type: "int" }
-      清洁术: {step: 42, type: "int" }
-      正义之怒CD: {step: 43, type: "int" }
-      神圣之盾CD: {step: 48, type: "int" }
-      神恩术CD: {step: 49, type: "int" }
-      正义圣印: {step: 50, type: "int" }
-      命令圣印: {step: 51, type: "int" }
-      十字军圣印: {step: 52, type: "int" }
-      光明圣印: {step: 53, type: "int" }
-      智慧圣印: {step: 54, type: "int" }
-      愤怒圣印: {step: 55, type: "int" }
-      公正圣印: {step: 56, type: "int" }
-    group:
-      start: 57
-      num: 3
-      生命值: {step: 1, type: "int" }
-      职责: {step: 2, type: "int" }
-      驱散: {step: 3, type: "int" }
+      魔法: {step: 3, type: "int" }
+      疾病: {step: 4, type: "int" }
+      中毒: {step: 5, type: "int" }
   3: # 惩戒
     目标生命值: {step: 11, type: "int" }
     施法技能: {step: 19, type: "int" }
@@ -1767,7 +1768,7 @@ state:
     5码敌人: {step: 41, type: "int" }
     目标施法: {step: 47, type: "int" }
     圣印: {step: 18, type: "int" }
-    圣印剩余: {step: 208, type: "int" }
+    圣印剩余: {step: 338, type: "int" }
     自动攻击: {step: 22, type: "int" }
     神恩术: {step: 23, type: "int" }
     圣光灌注: {step: 24, type: "int" }
@@ -1797,7 +1798,9 @@ state:
       公正圣印: {step: 56, type: "int" }
     group:
       start: 57
-      num: 3
+      num: 5
       生命值: {step: 1, type: "int" }
       职责: {step: 2, type: "int" }
-      驱散: {step: 3, type: "int" }
+      魔法: {step: 3, type: "int" }
+      疾病: {step: 4, type: "int" }
+      中毒: {step: 5, type: "int" }

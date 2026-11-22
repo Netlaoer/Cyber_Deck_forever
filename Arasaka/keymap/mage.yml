@@ -1,6 +1,6 @@
 # 由 Arasaka/other/gen_class_keymap.py 生成，勿手改；改 class/Mage.lua 后重跑。
 # 宏位与 core/macro.lua 的 macroKind 顺序一致（修饰键 x 键位）。
-# 前 30 个是动态技能（unit 1-30 = @raidN / @partyN-1），后面是静态技能（unit 0）。
+# 前 40 个是动态技能（unit 1-40 = @raidN / @partyN-1），后面是静态技能（unit 0）。
 
 1: {unit: 1, 技能: "解除次级诅咒", 热键: "CTRL-NUMPAD1"}
 2: {unit: 2, 技能: "解除次级诅咒", 热键: "CTRL-NUMPAD2"}
@@ -32,16 +32,26 @@
 28: {unit: 28, 技能: "解除次级诅咒", 热键: "CTRL-."}
 29: {unit: 29, 技能: "解除次级诅咒", 热键: "CTRL-/"}
 30: {unit: 30, 技能: "解除次级诅咒", 热键: "CTRL-;"}
-31: {unit: 0, 技能: "冰枪术", 热键: "CTRL-'"}
-32: {unit: 0, 技能: "冰锥术", 热键: "CTRL-["}
-33: {unit: 0, 技能: "炎爆术", 热键: "CTRL-]"}
-34: {unit: 0, 技能: "法术反制", 热键: "CTRL-\\"}
-35: {unit: 0, 技能: "暴风雪", 热键: "CTRL-7"}
-36: {unit: 0, 技能: "烈焰风暴", 热键: "CTRL-8"}
-37: {unit: 0, 技能: "奥术飞弹", 热键: "CTRL-9"}
-38: {unit: 0, 技能: "魔爆术", 热键: "CTRL-0"}
-39: {unit: 0, 技能: "火球术", 热键: "CTRL-="}
-40: {unit: 0, 技能: "灼烧", 热键: "ALT-NUMPAD1"}
-41: {unit: 0, 技能: "寒冰箭", 热键: "ALT-NUMPAD2"}
-42: {unit: 0, 技能: "冰霜新星", 热键: "ALT-NUMPAD3"}
-43: {unit: 0, 技能: "闪现术", 热键: "ALT-NUMPAD4"}
+31: {unit: 31, 技能: "解除次级诅咒", 热键: "CTRL-'"}
+32: {unit: 32, 技能: "解除次级诅咒", 热键: "CTRL-["}
+33: {unit: 33, 技能: "解除次级诅咒", 热键: "CTRL-]"}
+34: {unit: 34, 技能: "解除次级诅咒", 热键: "CTRL-\\"}
+35: {unit: 35, 技能: "解除次级诅咒", 热键: "CTRL-7"}
+36: {unit: 36, 技能: "解除次级诅咒", 热键: "CTRL-8"}
+37: {unit: 37, 技能: "解除次级诅咒", 热键: "CTRL-9"}
+38: {unit: 38, 技能: "解除次级诅咒", 热键: "CTRL-0"}
+39: {unit: 39, 技能: "解除次级诅咒", 热键: "CTRL-="}
+40: {unit: 40, 技能: "解除次级诅咒", 热键: "CTRL-INSERT"}
+41: {unit: 0, 技能: "冰枪术", 热键: "CTRL-HOME"}
+42: {unit: 0, 技能: "冰锥术", 热键: "CTRL-END"}
+43: {unit: 0, 技能: "炎爆术", 热键: "CTRL-PAGEUP"}
+44: {unit: 0, 技能: "法术反制", 热键: "CTRL-PAGEDOWN"}
+45: {unit: 0, 技能: "暴风雪", 热键: "CTRL-UP"}
+46: {unit: 0, 技能: "烈焰风暴", 热键: "CTRL-DOWN"}
+47: {unit: 0, 技能: "奥术飞弹", 热键: "ALT-NUMPAD1"}
+48: {unit: 0, 技能: "魔爆术", 热键: "ALT-NUMPAD2"}
+49: {unit: 0, 技能: "火球术", 热键: "ALT-NUMPAD3"}
+50: {unit: 0, 技能: "灼烧", 热键: "ALT-NUMPAD4"}
+51: {unit: 0, 技能: "寒冰箭", 热键: "ALT-NUMPAD5"}
+52: {unit: 0, 技能: "冰霜新星", 热键: "ALT-NUMPAD6"}
+53: {unit: 0, 技能: "闪现术", 热键: "ALT-NUMPAD7"}

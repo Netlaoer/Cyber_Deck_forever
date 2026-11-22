@@ -65,10 +65,10 @@ def main():
     print("  战斗     = %s" % sd.get("战斗"))
 
     # --- 2) group ---
-    print("\n[2] group（每个队友 3 格：生命值 / 职责 / 驱散）")
+    print("\n[2] group（每人：生命值 / 职责 / 各类驱散剩余秒数）")
     group = sd.get("group") or {}
-    # 从 config.yml 算出每个槽位的色条格号（和 Lua 侧 /cy dispelpix 对照用）
-    cell_of = {}
+    field_cells = {}       # (槽位, 字段) -> 色条格号
+    dispel_fields = []
     try:
         from GetPixels import _get_spec_config, load_config
         cfg2 = load_config()
@@ -76,31 +76,42 @@ def main():
         g = sc.get("group") or {}
         st, num = g.get("start"), g.get("num")
         if st and num:
+            fields = sorted(
+                ((k, v.get("step")) for k, v in g.items()
+                 if isinstance(v, dict) and isinstance(v.get("step"), int)),
+                key=lambda kv: kv[1])
+            dispel_fields = [k for k, _ in fields if k not in ("生命值", "职责")]
             for i in range(1, 11):
-                cell_of[i] = st + (i - 1) * num + 3
+                for name, step in fields:
+                    field_cells[(i, name)] = st + (i - 1) * num + step
     except Exception as e:
-        print("  （算格号失败：%s）" % e)
+        print("  （读配置失败：%s）" % e)
+
     for i in range(1, 11):
         d = group.get(str(i))
         if not d:
             continue
-        cell = cell_of.get(i)
-        print("  槽位%-2d 色条格=%-5s 生命值=%-4s 职责=%-4s 驱散=%s" % (
-            i, cell if cell else "?", d.get("生命值"), d.get("职责"), d.get("驱散")))
-    nz = [(k, v.get("驱散")) for k, v in group.items()
-          if v.get("驱散") not in (0, None)]
-    print("  >> 有驱散标记的槽位：%s" % (nz if nz else "（无）"))
+        extra = "  ".join("%s=%s" % (f, d.get(f)) for f in dispel_fields)
+        print("  槽位%-2d 生命值=%-4s 职责=%-4s %s" % (
+            i, d.get("生命值"), d.get("职责"), extra))
 
-    # --- 2b) 原始像素：把「驱散」格里的每个像素列出来 ---
-    #     那一格现在**只有引擎染色的纹理**（Lua 侧已不写这一格）。
-    #     颜色含义：(R=0, G=色条格号, B=驱散类型)
-    #       正常无减益 -> (0, 格号, 0)   底色，引擎纹理隐藏时露出色条初始色
-    #       有减益     -> (0, 格号, 类型) 类型 1魔法 2诅咒 3疾病 4中毒
-    #       异常白/黑  -> 引擎没隐藏纹理（白）或染成了黑色（黑）-> 那一格读不到
+    nz = {k: {f: v.get(f) for f in dispel_fields if v.get(f)}
+          for k, v in group.items()
+          if any(v.get(f) for f in dispel_fields)}
+    print("  >> 身上有可驱减益的槽位：%s" % (nz if nz else "（无）"))
+
+    # --- 2b) 原始像素：读每格中心，确认真实颜色和秒数一致 ---
+    #     Lua 侧每个类型一格，蓝通道 = 同类最长剩余秒数
+    #       0 = 没有；1 = 不足一秒；255 = 永久/超 255 秒
+    #     ★ 扫描必须走 GetPixels.decode_top_row（510 格 + 中心采样），
+    #       不能再按 255 格自己算 x。
     try:
         import ctypes
         from ctypes import wintypes
         import mss
+        from GetPixels import (decode_top_row, _find_top_row_end, _px,
+                               TOP_ROW_DIVISOR)
+
         hwnd = ctypes.windll.user32.FindWindowW(None, "魔兽世界")
         ctypes.windll.user32.SetProcessDPIAware()
         pt = wintypes.POINT(0, 0)
@@ -108,32 +119,43 @@ def main():
         rect = wintypes.RECT()
         ctypes.windll.user32.GetClientRect(hwnd, ctypes.byref(rect))
         width = rect.right - rect.left
-        # 色条：255 格，每格 width/255 像素
-        bw = width / 255.0
         with mss.mss() as sct:
-            img = sct.grab({"top": pt.y, "left": pt.x, "width": width, "height": 2})
+            img = sct.grab({"top": pt.y, "left": pt.x, "width": width, "height": 1})
+        row = decode_top_row(img.raw, img.width)
+
+        # 行宽：从起点标记 (0,1,0) 到纯红终止格（和解码器同一套几何）
         raw = img.raw
-        w = img.width
-        print("\n[2b] 原始像素（行0，行1）—— 「驱散」格的实际颜色")
-        print("     正常：(0, 格号, 0)=无减益  (0, 格号, 1~4)=有减益及类型")
-        print("     异常：(255,255,255)=引擎纹理没隐藏  (0,0,0)=索引丢了")
+        width = img.width
+        start_x = None
+        for x in range(min(510, width)):
+            px = _px(raw, x)
+            if px and px[1] == 1 and px[0] == 0 and px[2] == 0:
+                start_x = x
+                break
+        end_x = _find_top_row_end(raw, start_x if start_x is not None else 0, width)
+        row_width = (end_x + 1 - start_x) if (start_x is not None and end_x is not None) else 0
+
+        def raw_color(cell):
+            if not row_width:
+                return "?"
+            cx = start_x + ((2 * cell - 1) * row_width) // (2 * TOP_ROW_DIVISOR)
+            px = _px(raw, cx)
+            return "(%d,%d,%d)" % (px[2], px[1], px[0]) if px else "?"
+
+        print()
+        print("[2b] 每格中心：解出的值 + 原始 RGB（R,G,B）")
+        if not row_width:
+            print("  ！没找到起点/终止格：色条没画（UI 未加载）或被遮挡")
         for i in range(1, 6):
-            cell = cell_of.get(i)
-            if not cell:
-                continue
-            x0 = int(round((cell - 1) * bw))
-            x1 = int(round(cell * bw))
-            for row in (0, 1):
-                seen = []
-                for x in range(x0, min(x1, w)):
-                    off = (row * w + x) * 4
-                    b, g, r = raw[off], raw[off + 1], raw[off + 2]
-                    col = (r, g, b)
-                    if col not in seen:
-                        seen.append(col)
-                print("  槽位%-2d 格%-4d x=%d..%d 行%d 颜色=%s" % (
-                    i, cell, x0, x1 - 1, row,
-                    " ".join("(%d,%d,%d)" % c for c in seen)))
+            parts = []
+            for f in dispel_fields:
+                cell = field_cells.get((i, f))
+                if not cell:
+                    continue
+                parts.append("%s=格%d→%s 原始%s" % (f, cell, row.get(cell), raw_color(cell)))
+            if parts:
+                print("  槽位%-2d %s" % (i, "  ".join(parts)))
+
     except Exception as e:
         print("  （读原始像素失败：%s）" % e)
 

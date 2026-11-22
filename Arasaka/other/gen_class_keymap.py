@@ -3,9 +3,9 @@
 从 class/<Class>.lua 的 MacrosList 生成 Arasaka/keymap/<class>.yml。
 
 宏位规则与 core/macro.lua 完全一致：
-  macroKind = 7 组修饰键 x 39 个键 = 273 个
-  前 #dynamic*30 个：第 g 个动态技能的第 n 个宏位 -> @raidN / @party(N-1)
-  其余：第 j 个静态技能 -> macroKind[#dynamic*30 + j]
+  macroKind = 7 组修饰键 x 46 个键 = 322 个
+  前 #dynamic*40 个：第 g 个动态技能的第 n 个宏位 -> @raidN / @party(N-1)
+  其余：第 j 个静态技能 -> macroKind[#dynamic*40 + j]
 
 用法：
     python Arasaka/other/gen_class_keymap.py              # 生成全部职业
@@ -28,7 +28,9 @@ KEYS = [
     "NUMPADDECIMAL", "NUMPADPLUS", "NUMPADMINUS", "NUMPADMULTIPLY", "NUMPADDIVIDE",
     "F1", "F2", "F3", "F5", "F6", "F7", "F8", "F9", "F10", "F11", "F12",
     ",", ".", "/", ";", "'", "[", "]", "\\", "7", "8", "9", "0", "=",
+    "INSERT", "HOME", "END", "PAGEUP", "PAGEDOWN", "UP", "DOWN",
 ]
+UNITS = 40          # 队伍可施法人数上限，必须与 core/macro.lua 的 GROUP_TARGET_LIMIT 一致
 MACRO_KIND = [m + "-" + k for m in MODIFIERS for k in KEYS]
 
 SPECIAL_ALIAS = {
@@ -69,12 +71,12 @@ def build_rows(dynamic, static, special):
     """返回 [(unit, 技能名, 热键)]"""
     rows = []
     slot = 0
-    # 动态技能：每个技能 30 个宏位（unit 1-30）
+    # 动态技能：每个技能 UNITS 个宏位（unit 1-UNITS）
     for name in dynamic:
-        for unit in range(1, 31):
+        for unit in range(1, UNITS + 1):
             slot += 1
             if slot > len(MACRO_KIND):
-                raise SystemExit("动态宏位超过上限（%d）：%d 个动态技能 × 30" % (len(MACRO_KIND), len(dynamic)))
+                raise SystemExit("动态宏位超过上限（%d）：%d 个动态技能 × %d" % (len(MACRO_KIND), len(dynamic), UNITS))
             rows.append((unit, name, MACRO_KIND[slot - 1]))
     # 静态技能：unit 0
     static_map = {}
@@ -105,7 +107,7 @@ def gen_file(class_name, out_path):
     rows = []
     slot = 0
     for name in dynamic:
-        for unit in range(1, 31):
+        for unit in range(1, UNITS + 1):
             slot += 1
             if slot > len(MACRO_KIND):
                 raise SystemExit("宏位超过上限")
@@ -131,7 +133,7 @@ def gen_file(class_name, out_path):
     out = [
         "# 由 Arasaka/other/gen_class_keymap.py 生成，勿手改；改 class/%s.lua 后重跑。" % class_name,
         "# 宏位与 core/macro.lua 的 macroKind 顺序一致（修饰键 x 键位）。",
-        "# 前 %d 个是动态技能（unit 1-30 = @raidN / @partyN-1），后面是静态技能（unit 0）。" % (len(dynamic) * 30),
+        "# 前 %d 个是动态技能（unit 1-%d = @raidN / @partyN-1），后面是静态技能（unit 0）。" % (len(dynamic) * UNITS, UNITS),
         "",
     ]
     for i, (unit, name, key) in enumerate(rows, 1):

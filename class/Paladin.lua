@@ -9,7 +9,7 @@ local addon, ns = ...
        未学会的技能自动写 255（不可用）。
     2. 没有神圣能量、圣洁鸣钟、神圣棱镜、美德道标、光环掌握、盲目之光等正式服技能；
        圣印 / 神恩术 / 圣光灌注 由 core/forever.lua 直接扫描光环写入。
-    3. 三系共用同一套像素索引，只有队伍块长度不同（神圣 5 格 / 防护、惩戒 3 格）。
+    3. 三系共用同一套像素索引，只有队伍块长度不同（神圣 7 格 / 防护、惩戒 5 格）。
 
     索引表：
       1-15   通用（与全局 state 一致，11 = 目标生命值）
@@ -18,13 +18,43 @@ local addon, ns = ...
       27-36  技能；38-41 状态（大红冷却/延迟/驱散开关/5码敌人）
       42-45  技能；46-47 状态（正义之怒/目标施法）；48-49 技能
       50-56  七种圣印的“是否学会”探测（未学会写 255，不用于冷却）
-      57     队伍块起点：每人 num 格（生命值/职责/驱散/[圣光守望/圣光誓约]），
-             30 人 × 5 格 = 58~207
-      208    圣印剩余秒（auras 施放计时 remaining）
-             —— 必须排在队伍块之外，队伍块 58~207 已占满
+      57     队伍块起点：每人 num 格
+               1 生命值 / 2 职责 / 3 魔法 / 4 疾病 / 5 中毒
+               神圣额外 6 圣光守望、7 圣光誓约
+             40 人 × 7 格占 58~337（updateGroup 不封顶，按 GetNumGroupMembers 走）
+      338    圣印剩余秒（auras 施放计时 remaining）
+             —— 必须排在队伍块之外
 ]]
 
-local function buildBlocks(groupNum, groupAuras)
+local DISPEL_FIELD_BY_TYPE = {
+    Magic = "dispelMagic",
+    Curse = "dispelCurse",
+    Disease = "dispelDisease",
+    Poison = "dispelPoison",
+    Bleed = "dispelBleed",
+}
+
+local function buildBlocks(dispelTypes, groupAuras)
+    -- 队伍块：每人 num 格（生命值 / 职责 / 各驱散类型 / 光环）
+    -- 驱散格与 Shingen 同款：**每个能驱的类型各占一格**，蓝通道写「同类最长剩余秒数」
+    -- （0 = 没有，1 = 不足一秒，255 = 超过 255 秒或永久）。
+    -- 圣骑士只能驱 魔法/疾病/中毒，所以只建这三格；诅咒/流血不建，省 2 格/人。
+    local group = {
+        type = "group",
+        healthPercent = 1,
+        role = 2,
+    }
+    local num = 2
+    for _, typeName in ipairs(dispelTypes) do
+        num = num + 1
+        group[DISPEL_FIELD_BY_TYPE[typeName]] = num
+    end
+    for offset in pairs(groupAuras or {}) do
+        if offset > num then num = offset end
+    end
+    group.num = num
+    group.auras = groupAuras
+
     return {
         powerType = "MANA",
         [1] = { type = "block", name = "锚点" },
@@ -92,25 +122,20 @@ local function buildBlocks(groupNum, groupAuras)
 
         -- 圣印剩余秒：type = "aura" 会被 loadPlayerBlocks 收进 blocks.auras，
         -- 由 CyberDeck:updateAuraBlocks() 把 Auras["圣印"].remaining 写进来。
-        -- 编号必须排在队伍块之外：队伍块占 58~207。
-        [208] = { type = "aura", name = "圣印剩余", auraName = "圣印", showKey = "remaining" },
+        -- 编号必须排在队伍块之外：40 人 × 7 格占到 337。
+        [338] = { type = "aura", name = "圣印剩余", auraName = "圣印", showKey = "remaining" },
 
-        [57] = {
-            type = "group",
-            num = groupNum,
-            healthPercent = 1,
-            role = 2,
-            dispel = 3,
-            auras = groupAuras,
-        },
+        [57] = group,
     }
 end
 
 CyberDeck.ClassBlocks = {
-    -- 神圣多两个 buff 位：4 = 圣光守望(1310909)、5 = 圣光誓约(1328548)
-    [1] = buildBlocks(5, { [4] = { 1310909 }, [5] = { 1328548 } }),
-    [2] = buildBlocks(3), -- 防护
-    [3] = buildBlocks(3), -- 惩戒
+    -- 驱散格：只列本职业真能驱的类型（圣骑士 = 清洁术 4987：魔法/疾病/中毒）。
+    -- 神圣多两个 buff 位：6 = 圣光守望(1310909)、7 = 圣光誓约(1328548)
+    [1] = buildBlocks({ "Magic", "Disease", "Poison" },
+        { [6] = { 1310909 }, [7] = { 1328548 } }),
+    [2] = buildBlocks({ "Magic", "Disease", "Poison" }), -- 防护
+    [3] = buildBlocks({ "Magic", "Disease", "Poison" }), -- 惩戒
 }
 
 -- 创建圣骑士宏
