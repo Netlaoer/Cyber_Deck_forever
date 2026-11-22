@@ -1072,19 +1072,19 @@ end
 |---|---|---|---|
 | **本插件** | 类型号 1/2/3/4 | `(0, 1, 类型/255)` | 蓝通道 = 类型号，**给 Python 读数值** |
 | **正式服**（`Cyber_Deck-bak/main.lua:195-205`） | 类型号 1/2/3/4 | `(0, 1, 类型/255)` | **与本插件完全相同** |
-| **Decorative**（`Dcr_opt.lua:2357-2364`） | 类型号 1/2/3/4（`dtToBT`） | 用户自定义的边框颜色 | 蓝通道**不固定**，给人眼看 |
+| **Decrecursive**（`Dcr_opt.lua:2357-2364`） | 类型号 1/2/3/4（`dtToBT`） | 用户自定义的边框颜色 | 蓝通道**不固定**，给人眼看 |
 
-类型号来源（Decorative `DCR_init.lua:125-134`，与本插件一致）：
+类型号来源（Decrecursive `DCR_init.lua:125-134`，与本插件一致）：
 
 ```
 魔法 = 1    诅咒 = 2    疾病 = 3    中毒 = 4    （流血 = 11，本插件不用）
 ```
 
-**Decorative 把同一个 `dsCurve` 同时喂给两条通道**，
+**Decrecursive 把同一个 `dsCurve` 同时喂给两条通道**，
 这直接证明了**引擎染色的曲线 x 轴就是驱散类型号**：
 
 ```lua
--- Decorative.lua:588            C API 通道
+-- Decrecursive.lua:588            C API 通道
 C_UnitAuras.GetAuraDispelTypeColor(Unit, auraInstanceID, D.Status.dsCurve)
 -- Dcr_DebuffsFrame.lua:1202     引擎染色通道
 customDispelColorCurve = D.Status.dsCurve
@@ -1099,7 +1099,7 @@ customDispelColorCurve = D.Status.dsCurve
 
 **输出完全同码** —— 蓝通道都是类型号，Python 端零改动。
 
-> Decorative 的曲线额外有一个 `x=0` 点（正常色），
+> Decrecursive 的曲线额外有一个 `x=0` 点（正常色），
 > 因为它要用「无驱散类型」的槽显示常态边框；
 > 本插件的 slot 全部 `showWithoutDispelType = false`（无类型就隐藏），
 > 用不到 x=0，因此与**正式服保持一致**（正式服也没有 x=0 点）。
@@ -1138,30 +1138,54 @@ button:SetClipsChildren(true)
 --    但一格的 cell 在按钮左上角，裁剪后依然完整显示 -> 不污染左右邻格
 
 -- 2) 绝对定位到色条那一格
-button:SetPoint("TOPLEFT", bars, "TOPLEFT", rect.x, 0)
+--    ★ 必须锚 UIParent（container 的父级），不能锚 bars：
+--       bars 是 container 的兄弟，不在同一条父链上，
+--       引擎接管 AuraContainer 布局时会把按钮拉回 container 自己的坐标系，
+--       我们设的位置会被覆盖。
+--       colorBars 锚在 UIParent 的 (0,0) 且没有额外 scale，
+--       所以 bars 内部坐标与 UIParent 坐标数值相同，rect.x 可直接用。
+button:SetPoint("TOPLEFT", UIParent, "TOPLEFT", rect.x, 0)
 
--- 3) 像素格是按钮的子 Frame，驱散纹理建在 cell 里
-local cell = CreateFrame("Frame", nil, button)
-cell:SetSize(rect.w, rect.h)
-cell:SetPoint("TOPLEFT", button, "TOPLEFT", 0, 0)
-local tex = cell:CreateTexture(nil, "OVERLAY")
-tex:SetAllPoints(cell)
-tex:SetColorTexture(1, 1, 1, 1)        -- 白色，颜色全由曲线提供
+-- 3) 驱散纹理**直接建在按钮上** + **资产纹理**（照抄 Shingen block.lua:1045-1056）
+local tex = button:CreateTexture(nil, "ARTWORK")
+tex:ClearAllPoints()
+tex:SetPoint("CENTER", button, "CENTER", 0, 0)
+tex:SetSize(rect.w, rect.h)
+tex:SetTexture("Interface\\ChatFrame\\ChatFrameBackground")
+tex:SetVertexColor(1, 1, 1, 1)
 button:AddDispelTypeTexture(tex, {
     showIcon = false,
     showWhenHarmful = true,
     showWhenHelpful = false,
     showWithoutDispelType = false,
     style = Enum.CustomAuraButtonDispelTypeTextureStyle.PreserveAsset,
-    customDispelColorCurve = dispelCurve,
+    customDispelColorMap = MakeDispelColorMap(rect.cell),
 })
 ```
 
-**为什么纹理要建在 cell（按钮的子 Frame）里**：
-引擎要求纹理必须是 owner 的
-`direct or indirect descendant`（实测报
-`bad object '...' must be the owner or a direct or indirect descendant of owner`），
-cell 里的纹理是按钮的**间接后代**，正好满足。
+**为什么必须用资产纹理**：
+`style = PreserveAsset` 的语义是「保留资产的原始样式，只改顶点色」。
+纯色纹理（`SetColorTexture`）没有资产，引擎可能染不上 —— 实测表现就是「战斗中没像素」。
+所以纹理用 `SetTexture("Interface\\ChatFrame\\ChatFrameBackground")` +
+`SetVertexColor(1,1,1,1)`，颜色完全交给引擎的 colorMap。
+
+**为什么用 colorMap 而不是 curve**：
+`customDispelColorMap` 是「类型名 → 颜色」的映射（Shingen 同款）；
+`customDispelColorCurve` 是「x=类型号 → 颜色」（Decrecursive 同款）。
+两者输出的颜色可以完全等价 —— 本插件的 colorMap 取值
+`(0, 格号/255, 类型号/255)`，与 curve `x=类型 → (0,1,类型/255)` 等价，
+**像素编码不变，Python 端零改动**。
+
+**类型色号**（照抄 Shingen `DISPEL_TYPE_COLOR_IDS`）：
+
+```
+Magic = 1    Curse = 2    Disease = 3    Poison = 4
+（Shingen 还有 Enrage = 9、Bleed = 11，本插件的 Python 端只认 1~4，不启用）
+```
+
+**单 slot，不用 candidateFilters 分流**：
+一个 slot 就能覆盖所有类型（引擎按 debuff 的实际类型去查 colorMap），
+也避免了「多个 slot 挤在同一格」的相互干扰。
 
 **类型分流**：每个队友 × 每种类型 = 一个 slot，
 `candidateFilters = { includeDispelTypes = { [typeName] = true } }`，
@@ -1169,7 +1193,7 @@ cell 里的纹理是按钮的**间接后代**，正好满足。
 （与 Shingen、Decursive 一致）。同一格的多个 slot 里，
 引擎只显示「有对应 debuff 的那个」，所以同格最终只有一个颜色。
 
-**调用顺序**照抄 Shingen / Decorative：
+**调用顺序**照抄 Shingen / Decrecursive：
 `AddAuraSlot` → `SetUnit` → `SetShown` → `SetEnabled`。
 顺序反了引擎会在 slot 还没注册时就开始 layout。
 

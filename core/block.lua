@@ -47,12 +47,22 @@ end
 
 -- 取色条第 i 格的位置与尺寸（**色条内部坐标系**）
 --
--- ★ 必须用 BLOCK_FIX_CONFIG.blockWidth，并且调用方要把宿主 frame 挂在
---   CyberDeckColorBars 上。原因：
---   bars:GetWidth() 报的是「有效宽度」(1418.5)，实际渲染是 1819 物理像素，
---   真实 effective scale = 1819/1418.5 = 1.2825（GetScale() 报 1 是假象）。
---   宿主挂 bars -> 用 bars 内部坐标 -> 物理位置 = 1379.6 * 1.2825 = 1770 ✓
---   宿主挂 UIParent -> 系数变成 0.7046 -> 物理 972 ✗（偏了 70 多格）
+-- ★ 必须用 BLOCK_FIX_CONFIG.blockWidth（= screenWidth/255 = 7.823），
+--   并且调用方把宿主 frame 锚在 **UIParent** 上（不是 bars）。
+--
+--   推导（实测）：
+--     colorBars 锚在 UIParent 的 (0,0)、无额外 scale，
+--     所以 bars 内部坐标与 UIParent 坐标**数值相同**，
+--     两者算出的物理位置一致。
+--     UIParent 的实际渲染 scale = 色条物理宽 / screenWidth
+--                              = 1819 / 1994.8 = 0.9118
+--     格 249 -> rect.x = 248 * 7.823 = 1940.1 -> 物理 1940.1 * 0.9118 = 1769
+--     （实测探针中心落在 1770，与格 249 的物理位置 1769 吻合 ✓）
+--
+--   ★ 为什么锚 UIParent 而不是 bars：
+--     引擎接管的 AuraContainer，其 slot 按钮如果锚在 container 父链之外
+--     （bars 是 container 的兄弟），布局时会被拉回 container 自己的坐标系，
+--     我们设的位置直接失效。Shingen 用的就是 UIParent。
 function CyberDeck:GetColorBarCellRect(i)
     if not i or i <= 0 or i > BLOCK_FIX_CONFIG.blockCount then return nil end
     return {
