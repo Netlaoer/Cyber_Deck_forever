@@ -137,7 +137,7 @@ Cyber_Deck/
 ```
 
 > **运行方式（二选一）**
-> 1. 源码：`python logic_gui_Tools.py`（Python 3 + `customtkinter` / `mss` / `pyyaml` / `pywin32`）
+> 1. 源码：`python logic_gui_Tools.py`（Python 3 + `customtkinter` / `mss` / `pyyaml`；Win32 走 `ctypes`，不需要 pywin32）
 > 2. 打包：`python pack/打包exe.py` 生成 `Cyber_Deck.exe`，分发时无需 Python 环境（exe 不入库）
 >
 > 两种方式共用同一份 `Arasaka/`，改逻辑层不必重新打包（点"重载"就生效）。
@@ -1427,5 +1427,7 @@ D:/DevTools/python313/python.exe _work/test_macro_budget.py
 **致谢**
 
 - [Fuyutsui](https://github.com/waynebian01/Fuyutsui/) — 「像素编码 + 外部决策层」思路的早期参考
+- [Shigure](https://github.com/waynebian01/Shigure) — 队伍光环/驱散引擎计时与像素分档编码的参考实现
+  （本插件的队伍驱散模块 `core/group_aura.lua` 即移植自其 Forever 版）
 - [ForeverDB.net](https://foreverdb.net) — 无限服 1.60.1 技能数据
 - [Ace3](https://www.wowace.com/projects/ace3) / [LibRangeCheck-3.0](https://www.curseforge.com/wow/addons/librangecheck-3-0) — 插件基础设施

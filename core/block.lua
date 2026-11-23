@@ -85,23 +85,6 @@ function CyberDeck:EncodeBlockChannels(index)
     return EncodeBlockChannels(index)
 end
 
--- 取色条第 i 格的位置与尺寸（**色条内部坐标系**）
---
--- ★ 宿主 frame 必须锚 **UIParent**（不是 bars）：bars 是 AuraContainer 的兄弟，
---   不在同一条父链上，引擎接管布局时会把按钮拉回 container 自己的坐标系，
---   我们设的位置直接失效。Shingen 用的就是 UIParent。
---   colorBars 锚在 UIParent 的 (0,0) 且无额外 scale，
---   所以 bars 内部坐标与 UIParent 坐标数值相同，rect.x 可直接用。
-function CyberDeck:GetColorBarCellRect(i)
-    if not i or i <= 0 or i > BLOCK_FIX_CONFIG.capacity then return nil end
-    return {
-        x = GetXOffset(i - 1, BLOCK_FIX_CONFIG.blockWidth, BLOCK_FIX_CONFIG.blockSpacing),
-        y = 0,
-        w = BLOCK_FIX_CONFIG.blockWidth,
-        h = BLOCK_FIX_CONFIG.blockHeight,
-    }
-end
-
 function CyberDeck:clearAllTextures()
     for i = 1, BLOCK_FIX_CONFIG.capacity do
         self:CreatTexture(i, 0)
