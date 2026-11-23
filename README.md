@@ -321,7 +321,10 @@ char = { level, aoeMode, cooldowns, dpsMode, delay, potion,
 | `count_units_with_aura(state_dict, aura_name)` | 有该 buff 的人数 |
 | `count_units_without_aura_below_health(...)` | 缺该 buff 且血低于阈值的人数 |
 
-**统一约定**：只统计 `职责 != 0` 的单位；`state_dict["group"]` 的键是 `"1"`~`"40"`（`config.group.units` 可收窄），字段为
+**统一约定**：选人函数一律只统计 `职责 != 0` 的单位（职责像素 = `职责值 × 是否在 UnitInRange`，
+所以它同时是「在 40 码内」的代理；空槽/死亡/超距都是 0）。驱散
+（`get_unit_with_dispel_seconds`）同样遵守这条约定，不单独例外。
+`state_dict["group"]` 的键是 `"1"`~`"40"`（`config.group.units` 可收窄），字段为
 `生命值 / 职责 / 魔法 / 疾病 / 中毒 / 光环`（驱散字段是剩余秒数，`光环` 是 `{名称: 剩余秒}` 字典）。
 
 ### 职业逻辑统一接口
@@ -404,6 +407,7 @@ state_dict = {
     "大红冷却": int,
     "延迟": int,
     "驱散开关": int,
+    "鼠标可驱": int,      # 圣骑专属：鼠标指向的人身上可驱减益的剩余秒数（引擎写，>0=有可驱；战斗中同样有效）
     "5码敌人": int,
     "目标施法": int,
     # …职业专属字段若干，名字与 step 由该职业自己定
@@ -441,6 +445,7 @@ state_dict = {
 | 队伍类型 | 0=单人, 1-40=团本, 46=大秘 |
 | 职业ID | 1=战士 2=圣骑 3=猎人 4=盗贼 5=牧师 6=DK 7=萨满 8=法师 9=术士 10=武僧 11=德 12=DH 13=唤魔师（无限服只有 1~5、7~9、11 存在） |
 | 驱散（每类型一格） | 剩余秒数：0=没有 1=不足一秒 2~254=秒 255=永久/超 255；圣骑士建 魔法/疾病/中毒 三格，见十六点五 |
+| 鼠标可驱 | 圣骑专属：鼠标指向的人身上本职业可驱减益的**剩余秒数**（绑 `mouseover` 的 AuraContainer 引擎写，本职业能驱的几类取最长；`>0`=有可驱。战斗中同样有效，见十六点五） |
 
 ---
 
@@ -1097,6 +1102,30 @@ Shingen 的写法完全绕开类型：**引擎自己算剩余时间并给计时�
 插件侧只提供「格子在哪、秒数怎么映射到蓝通道」，不参与任何光环读取，
 所以脱战/战斗是同一套，不存在两条通道抢同一格。
 
+### 鼠标指向驱散（开关关时）
+
+`/cy dispel off` 关掉自动驱散后，改为**鼠标指向驱散**：鼠标指向哪个队友、他身上有
+本职业能驱的减益就施放。
+
+判断和施法统一看 `mouseover`（不是 target）：
+
+| 环节 | 实现 |
+|---|---|
+| 判断 | `core/group_aura.lua` 的 `RefreshMouseoverDispelContainer`：给 `mouseover` 单独建一条 AuraContainer，**一条 slot 过滤本职业所有能驱的类型**（圣骑=Magic/Disease/Poison），引擎取这几类剩余最长的写进格 **339「鼠标可驱」**（剩余秒数，`>0`=有可驱） |
+| 施法 | `class/Paladin.lua` 静态宏 `[34] = "[@mouseover]清洁术"`；决策层 `paladin_logic.py` 三系开关关分支 `鼠标可驱 > 0 → get_hotkey(0, "清洁术")` |
+
+> 和队友驱散同源（引擎 AuraContainer 自己算剩余秒数、不读光环），所以**战斗中同样有效**。
+> 早期版本用「目标类型」判断 + `[@mouseover]` 宏，判断和施法不是同一个单位，
+> 结果是「鼠标指队友、目标是怪」时永远不驱散 —— 已废弃。
+
+容器刷新时机（与队友容器同源）：
+
+- `UPDATE_MOUSEOVER_UNIT`（鼠标换单位）→ 但 `RefreshMouseoverDispelContainer` 内部
+  只在 `UnitGUID("mouseover")` **变化**时才 `SetUnit` 重绑，同一单位身上的减益变化由
+  引擎自己刷新，不会每帧 `SetUnit`（每帧重绑会拖慢主循环，之前踩过坑）；
+- `PLAYER_REGEN_DISABLED` / `PLAYER_REGEN_ENABLED`（进/脱战）→ 同步重绑，防引擎重置绑定；
+- `loadPlayerBlocks`（换专精）→ 先 `ReleaseMouseoverDispelContainer` 再按新格号重建。
+
 ### 三条硬约束（缺一不可，都在 `core/group_aura.lua`）
 
 ```lua
@@ -1164,6 +1193,7 @@ D:/DevTools/pyenv-re313/Scripts/python.exe Arasaka/check_dispel.py
 | `按钮=有`、`文字b=0.000`、而 `实际可驱减益 N 条` | **引擎没把计时文字画上去** | 容器绑定失效，见下 |
 | `文字b=0.2xx`，但 `check_dispel.py` 读 0 | 解码几何错位（行宽/格中心） | 对比 `[2b]` 的原始 RGB |
 | `实际可驱减益 读不到`（战斗中） | 正常，secret 限制 | 脱战再看 |
+| 明明没有目标却驱散到自己 | 选中了一个**不存在的槽位**：`[group:raid,@raidN]` 里 N 不存在时，宏落到末尾的 `[@player]` | `updateGroup` 已对 `#groupList` 之后的槽位清零生命值/职责；若仍出现，看 `check_dispel.py` 里哪个槽位生命值不为 0 |
 
 **容器绑定失效**：`SetUnit` 会被引擎在过场/战斗中重置，且候选过滤会被 `SetUnit` 冲掉。
 只在「换单位」时绑一次不够 —— 登录/`/reload` 那一刻引擎可能还没就绪，绑失败就永久恒 0。
@@ -1173,11 +1203,10 @@ D:/DevTools/pyenv-re313/Scripts/python.exe Arasaka/check_dispel.py
 - **每次花名册变化（`updateGroup`）都对所有成员重绑一遍**：
   `SetUnit` → `SetAuraSlotCandidateFilters`（每槽新建过滤表）→ `UpdateAllAuras`；
 - `PLAYER_ENTERING_WORLD`（过场/重载）再刷一次；
+- `PLAYER_REGEN_DISABLED`（进战斗）也 `RefreshGroupAuraContainers` 一次 —— 引擎会在
+  战斗开始时重置 `SetUnit` 绑定，不重刷的话战斗中容器染色失效、自动驱散不触发；
 - 容器常驻复用，只 `SetEnabled` / `Show` / `Hide`，从不 `Destroy`（AuraContainer 的
   slot 不能删，只能丢弃整个容器重来，换专精时由 `ReleaseGroupAuraContainers` 处理）。
-
-脱战时若检测到「队友有可驱减益、但那一格仍是黑的」，聊天框会自动红字提示一次
-（`CheckDispelProbeRendering`），不用等你自己发现。
 
 打印每个槽位的 `生命值 / 职责 / 魔法 / 疾病 / 中毒` 与对应格号，
 以及每格中心解出来的值。某项该有值却是 0，就看这一格是不是没建槽（`/cy gui` 看色条）。

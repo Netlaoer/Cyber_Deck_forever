@@ -125,6 +125,10 @@ local function buildBlocks(dispelTypes, groupAuras)
         -- 编号必须排在队伍块之外：40 人 × 7 格占到 337。
         [338] = { type = "aura", name = "圣印剩余", auraName = "圣印", showKey = "remaining" },
 
+        -- 鼠标可驱：引擎写（绑 mouseover 的 AuraContainer，本职业能驱的几类取剩余最长），
+        -- > 0 = 鼠标指向的人身上有本职业能驱的减益。战斗中同样有效（引擎算，不读光环）。
+        [339] = { type = "block", name = "鼠标可驱" },
+
         [57] = group,
     }
 end

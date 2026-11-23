@@ -81,6 +81,7 @@ function CyberDeck:OnEnable()
     self:RegisterEvent("ACTIONBAR_HIDEGRID")
     self:RegisterEvent("ACTIONBAR_SHOWGRID")
     self:RegisterEvent("SPELL_UPDATE_CHARGES")
+    self:RegisterEvent("UPDATE_MOUSEOVER_UNIT")
     if self.StartFrameUpdates then
         self:StartFrameUpdates()
     end

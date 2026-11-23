@@ -580,9 +580,9 @@ def get_unit_with_dispel_seconds(state_dict, field_name):
 
     - field_name: "魔法" / "诅咒" / "疾病" / "中毒" / "流血"
       （Lua 侧每个类型一格：0 = 没有，1 = 不足一秒，255 = 永久/超 255 秒）
-    - 仅考虑职责不等于 0 的单位。
+    - 仅考虑职责不等于 0 的单位（职责像素 = 职责值 × 是否在 40 码内，超距/空槽/死亡都是 0）。
 
-    返回 (slot_key, unit_data) 或 (None, None)，slot_key 为 "1"～"30"。
+    返回 (slot_key, unit_data) 或 (None, None)，slot_key 为 "1"～"40"。
     """
     group = state_dict.get("group") or {}
     for key in sorted(group.keys(), key=lambda k: int(k) if str(k).isdigit() else 0):

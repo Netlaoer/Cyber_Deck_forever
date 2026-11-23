@@ -177,6 +177,7 @@ def run_paladin_logic(state_dict, spec_name):
     五码敌人 = _int(state_dict, "5码敌人")
     延迟 = _int(state_dict, "延迟")
     驱散开关 = _int(state_dict, "驱散开关", 1)
+    鼠标可驱 = _int(state_dict, "鼠标可驱")
     当前圣印 = _int(state_dict, "圣印")
     圣印剩余 = _int(state_dict, "圣印剩余")
 
@@ -256,6 +257,10 @@ def run_paladin_logic(state_dict, spec_name):
         elif 清洁术CD == 0 and 驱散单位 is not None:
             current_step = f"施放 清洁术 on {驱散单位}"
             action_hotkey = get_hotkey(int(驱散单位), "清洁术")
+        # 开关关 -> 鼠标指向（判断和施法都看 mouseover：unit 0 的 [@mouseover] 宏）
+        elif 清洁术CD == 0 and not 驱散开关 and 鼠标可驱 > 0:
+            current_step = "施放 清洁术 on 鼠标指向"
+            action_hotkey = get_hotkey(0, "清洁术")
 
         # ==================== 团队/队伍/单人逻辑 ====================
         else:
@@ -321,14 +326,14 @@ def run_paladin_logic(state_dict, spec_name):
             current_step = f"施放 {失败法术}"
             action_hotkey = get_hotkey(0, 失败法术)
         # 驱散：开关开 -> 自动驱散所有队友（@raidN，单人时 @player 兜底就是自己）
-        #       开关关 -> 鼠标指向（unit 0 的 [@mouseover] 宏）
+        #       开关关 -> 鼠标指向（判断和施法都看 mouseover：unit 0 的 [@mouseover] 宏）
         elif 清洁术CD == 0 and 驱散开关 and 驱散单位 is not None:
             current_step = f"施放 清洁术 on {驱散单位}"
             action_hotkey = get_hotkey(int(驱散单位), "清洁术")
-        # 目标身上可驱散的减益：12=魔法 14=疾病 15=中毒（经典服清洁术 4987 只驱这三种，
-        # 13=诅咒 经典圣骑士没有法术能驱，永远不会出现）
-        elif 清洁术CD == 0 and 目标类型 in (12, 14, 15):
-            current_step = "施放 清洁术 on 目标"
+        # 鼠标指向的人身上有本职业能驱的减益（引擎写「鼠标可驱」剩余秒数，> 0 就按；
+        # 战斗中同样有效，因为和队友驱散同源、引擎自己算，不读光环）
+        elif 清洁术CD == 0 and not 驱散开关 and 鼠标可驱 > 0:
+            current_step = "施放 清洁术 on 鼠标指向"
             action_hotkey = get_hotkey(0, "清洁术")
         # 自疗：极端低血才丢圣疗（瞬发大治疗）
         elif not 正在读条 and 0 < 生命值 < 10 and 圣疗术CD == 0:
@@ -396,6 +401,10 @@ def run_paladin_logic(state_dict, spec_name):
         if 法术失败 != 0 and 失败法术 is not None:
             current_step = f"施放 {失败法术}"
             action_hotkey = get_hotkey(0, 失败法术)
+        # 开关关 -> 鼠标指向驱散（判断和施法都看 mouseover：unit 0 的 [@mouseover] 宏）
+        elif 清洁术CD == 0 and not 驱散开关 and 鼠标可驱 > 0:
+            current_step = "施放 清洁术 on 鼠标指向"
+            action_hotkey = get_hotkey(0, "清洁术")
         elif not 正在读条 and not 移动 and 0 < 生命值 < 45 and 能量值 >= 35:
             current_step = f"自疗 圣光闪现 ({生命值}%)"
             # 用 unit 1：宏体自带 [nogroup,@player]，单人时会自动落到自己

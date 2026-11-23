@@ -498,6 +498,10 @@ function CyberDeck:loadPlayerBlocks(specIndex)
     if self.ReleaseGroupAuraContainers then
         self:ReleaseGroupAuraContainers()
     end
+    -- 鼠标探针容器同理：格号可能变（339），整体释放由下一次 RefreshMouseover 重建
+    if self.ReleaseMouseoverDispelContainer then
+        self:ReleaseMouseoverDispelContainer()
+    end
 end
 
 function CyberDeck:loadPlayerMacros()
@@ -932,10 +936,11 @@ end
 
     11 = "友方"
     12 = "友方 有魔法 减益"
-    13 = "友方 有疾病 减益"
-    14 = "友方 有诅咒 减益"
+    13 = "友方 有诅咒 减益"
+    14 = "友方 有疾病 减益"
     15 = "友方 有中毒 减益"
 
+    （取值 = debuffType + 11：1魔法 2诅咒 3疾病 4中毒 -> 12/13/14/15）
 ]]
 
 function CyberDeck:updateTargetType()
@@ -1369,9 +1374,31 @@ function CyberDeck:updateGroup()
         i = i + 1
     end
 
+    -- ★ 空槽位清零：退队/人数减少后，旧槽位的生命值/职责会保留上一次写的值，
+    --   决策层就会选到一个「不存在的队友」；宏是 [group:raid,@raidN]，N 不存在时
+    --   落到末尾的 [@player] -> 变成给自己驱散（这正是「看着自己才驱散」的来源之一）。
+    --   驱散格不用清：容器 Hide 后按钮不显示，露出的就是色条底色 0。
+    if blocks and blocks.groups then
+        local g = blocks.groups
+        local aliveCount = #groupList
+        local maxSlot = CyberDeck.GROUP_TARGET_LIMIT or 40
+        if g.healthPercent and g.role and aliveCount < maxSlot then
+            for i = aliveCount + 1, maxSlot do
+                local base = g.start + (i - 1) * g.num
+                self:CreatTexture(base + g.healthPercent, 0)
+                self:CreatTexture(base + g.role, 0)
+            end
+        end
+    end
+
     -- 花名册变化后重建/重绑队伍驱散容器（Shingen unit/group.lua:208 同款）
     if self.RefreshGroupAuraContainers then
         self:RefreshGroupAuraContainers()
+    elseif not self.groupAuraMissingWarned then
+        self.groupAuraMissingWarned = true
+        self:Print("|cffff0000core/group_aura.lua 没生效|r：队伍驱散像素不会被创建（"
+            .. tostring(self.groupAuraLoadError or "文件加载报错") .. "）。"
+            .. "敲 /console scriptErrors 1 再 /reload 看具体错误。")
     end
 
     -- 宏位上限告警：31 号以后没有可用的施法宏，决策层也不会去选（Python 只读 30 槽）
@@ -1463,6 +1490,17 @@ end
 function CyberDeck:PLAYER_REGEN_DISABLED()
     self:updateTargetType()
     self:updatePlayerCombat()
+    -- 进战斗也重刷一次：引擎（AuraContainer）会在战斗开始时重置 SetUnit 绑定，
+    -- 之前只在脱战（PLAYER_REGEN_ENABLED）重绑，导致战斗中容器染色失效 -> 不驱散。
+    -- 用户反馈「打一次 /cy dispelprobe 就正常」正是因为探针里手动重试了 Refresh。
+    -- 用 Refresh 而不是 RebindAll：Refresh 会补建缺失的容器（单人进战斗时容器可能还没建）。
+    if self.RefreshGroupAuraContainers then
+        self:RefreshGroupAuraContainers()
+    end
+    -- 鼠标探针同样在进战斗时重绑（引擎会重置 SetUnit 绑定）
+    if self.RefreshMouseoverDispelContainer then
+        self:RefreshMouseoverDispelContainer()
+    end
 end
 
 function CyberDeck:PLAYER_REGEN_ENABLED()
@@ -1471,6 +1509,10 @@ function CyberDeck:PLAYER_REGEN_ENABLED()
     -- 脱战立刻重绑一次（战斗内引擎可能重置过绑定）
     if self.RebindAllGroupAuraContainers then
         self:RebindAllGroupAuraContainers()
+    end
+    -- 鼠标探针同步重绑
+    if self.RefreshMouseoverDispelContainer then
+        self:RefreshMouseoverDispelContainer()
     end
 end
 
@@ -1733,6 +1775,16 @@ function CyberDeck:PLAYER_TARGET_CHANGED()
     self:updateTargetFullInfo()
 end
 
+function CyberDeck:UPDATE_MOUSEOVER_UNIT()
+    -- 鼠标指向的驱动：mouseover 引擎探针（绑 mouseover 的 AuraContainer，
+    -- 引擎算剩余秒数写「鼠标可驱」格，战斗中同样有效）。
+    -- RefreshMouseoverDispelContainer 内部只在 UnitGUID 变化时重绑，
+    -- 所以这里高频触发也没关系（不会每帧 SetUnit）。
+    if self.RefreshMouseoverDispelContainer then
+        self:RefreshMouseoverDispelContainer()
+    end
+end
+
 function CyberDeck:NAME_PLATE_UNIT_ADDED(_, unit)
     addNameplate(unit)
     self:updateTargetType()
@@ -1832,8 +1884,12 @@ end
 
 --- 按格号找该槽的 AuraButton（initializeFrame 里打了 cdPixelIndex 标记）
 local function FindSlotButton(container, pixelIndex)
-    local children = { container:GetChildren() }
-    for _, child in ipairs(children) do
+    -- 优先用 initializeFrame 里存下的引用（GetChildren 不保证包含引擎建的 AuraButton）
+    local cached = container.cdButtons and container.cdButtons[pixelIndex]
+    if cached then
+        return cached
+    end
+    for _, child in ipairs({ container:GetChildren() }) do
         if child.cdPixelIndex == pixelIndex then
             return child
         end
@@ -1856,13 +1912,38 @@ function CyberDeck:PrintDispelProbeDebug()
             offsets[#offsets + 1] = ("%s=%d"):format(def[1], groups[def[2]])
         end
     end
+    local moduleReady = (self.RefreshGroupAuraContainers ~= nil)
     local containers = (self.GetGroupAuraContainers and self:GetGroupAuraContainers()) or {}
     local containerCount = 0
     for _ in pairs(containers) do containerCount = containerCount + 1 end
-    self:Print(("[驱散探针] start=%s num=%s 格=%s | 容器 %d 个 | 色条=%s")
+    self:Print(("[驱散探针] start=%s num=%s 格=%s | 容器 %d 个 | 模块=%s | 色条=%s")
         :format(tostring(groups.start), tostring(groups.num),
             #offsets > 0 and table.concat(offsets, " ") or "|cffff0000空|r",
-            containerCount, _G.CyberDeckColorBars and "有" or "|cffff0000无|r"))
+            containerCount,
+            moduleReady and "有" or "|cffff0000未加载|r",
+            _G.CyberDeckColorBars and "有" or "|cffff0000无|r"))
+    if not moduleReady then
+        self:Print(("  ！core/group_aura.lua 没生效：%s")
+            :format(tostring(self.groupAuraLoadError or "文件加载报错，用 /console scriptErrors 1 后 /reload 看")))
+        return
+    end
+    if containerCount == 0 then
+        self:Print(("  groupList=%d 个成员 | blocks.groups=%s")
+            :format(#(self.groupList or {}),
+                (self.blocks and self.blocks.groups and "有") or "|cffff0000无|r"))
+        -- 现场重试一次：把「建容器失败」的原因直接暴露出来
+        local ok, err = pcall(self.RefreshGroupAuraContainers, self)
+        self:Print(("  容器为 0，现场重试 Refresh：%s%s")
+            :format(ok and "已调用" or "|cffff0000抛错|r",
+                ok and "" or ("（" .. tostring(err) .. "）")))
+        if self.dispelContainerError then
+            self:Print(("  上次建容器失败：%s"):format(tostring(self.dispelContainerError)))
+        end
+        containers = (self.GetGroupAuraContainers and self:GetGroupAuraContainers()) or {}
+        containerCount = 0
+        for _ in pairs(containers) do containerCount = containerCount + 1 end
+        self:Print(("  重试后容器 %d 个"):format(containerCount))
+    end
 
     local indices = {}
     for i in pairs(containers) do indices[#indices + 1] = i end
@@ -1902,42 +1983,18 @@ function CyberDeck:PrintDispelProbeDebug()
     end
 end
 
--- 脱战自检：队友有可驱减益，但那个按钮仍是黑的 -> 引擎没染色，提示一次
-function CyberDeck:CheckDispelProbeRendering()
-    if InCombatLockdown() or self.dispelProbeRenderWarned then return end
-    local now = GetTime()
-    if self._dispelProbeNextCheck and now < self._dispelProbeNextCheck then return end
-    self._dispelProbeNextCheck = now + 3
-    local containers = (self.GetGroupAuraContainers and self:GetGroupAuraContainers()) or {}
-    for _, container in pairs(containers) do
-        if container.cdUnit then
-            local cnt = DescribeAuraDebuffs(container.cdUnit)
-            if cnt and cnt > 0 then
-                for _, slot in ipairs(container.cdDispelSlots or {}) do
-                    local btn = FindSlotButton(container, slot.index)
-                    local text = btn and btn.cdDurationText
-                    if text and text.GetTextColor then
-                        local okC, r, g, b = pcall(text.GetTextColor, text)
-                        if okC and b and b < 0.02 then
-                            self.dispelProbeRenderWarned = true
-                            self:Print(("|cffff0000驱散像素未染色|r：%s 身上有 %d 条可驱减益，"
-                                .. "但那一格仍是黑的 -> 引擎没把计时文字画上去。"
-                                .. "敲 /cy dispelprobe 看详情。"):format(tostring(container.cdUnit), cnt))
-                            return
-                        end
-                    end
-                end
-            end
-        end
-    end
-end
-
-
 -- 队伍驱散格**只有引擎一个写入方**（Shingen 同款）：
 -- 计时文字的颜色由引擎按剩余秒数算，Lua 侧不读光环、也不写那一格。
 -- 脱战/战斗是同一套，不存在两条通道抢同一格的问题。
 
 function CyberDeck:UNIT_AURA(_, unit, info)
+    -- 鼠标指向驱散后的「引擎没及时清理」：减益被驱掉后，这里立即让引擎重新评估
+    -- 按钮显示，把已驱减益的按钮隐藏、「鼠标可驱」格及时清零（否则残留旧值 > 0
+    -- 会让决策层重复驱散）。UNIT_AURA 的 unit 对鼠标指向单位可能是 "mouseover" 或
+    -- 实际 token（party1 等），所以只要鼠标探针容器在绑定状态就刷新，不精确匹配。
+    if self.RefreshMouseoverDispelAuras then
+        self:RefreshMouseoverDispelAuras()
+    end
     local obj = group[unit]
     if not obj then return end
     if safeTruthy(info.isFullUpdate) then
@@ -2003,9 +2060,7 @@ function CyberDeck:OnUpdate(elapsed)
         self:updateItemCoolDown()
         self:UpdateForeverAuras()
         self:UpdateForeverAutoAttack()
-        -- 队伍驱散探针：每个队友一个容器，每个可驱类型一条 slot，
-        -- 队伍驱散容器由 updateGroup（花名册变化）驱动，不在 OnUpdate 轮询
-        if self.CheckDispelProbeRendering then self:CheckDispelProbeRendering() end
+        -- 队伍驱散容器由 updateGroup（花名册变化）和进/脱战重刷驱动，不在 OnUpdate 轮询
         self.timeElapsed = 0
     end
 end
