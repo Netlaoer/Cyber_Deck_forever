@@ -172,18 +172,15 @@ end
 --
 -- 战斗中 / 首领战中 C_UnitAuras 返回 secret 值，读不到减益类型，
 -- 所以「目标类型」像素会退回基线（友善 11 / 敌对 1）。
--- 这只会影响「按敌人减益类型选技能」这类判断（驱邪术/神圣愤怒已撤掉）。
+-- 这只会影响「按敌人减益类型选技能」这类判断。
 --
--- ★ 队友侧不受此限：那几格由 AuraContainer 的引擎计时驱动，
+-- ★ 队友侧不受此限：那一侧由 AuraContainer 的引擎计时驱动，
 --   插件侧不读光环，见 core/group_aura.lua。
 -- ================================================================
 
 -- 遍历光环列表，找第一个「玩家能驱散」的（曲线求值非零）
 -- 只看 ids[1] 是不够的：第一个减益可能正好是自己驱不掉的那种
---
--- ★ 只用于**目标侧**（getTargetDispelType：读目标身上的减益类型，
---   编码成 11~15 写进「目标类型」像素）。
---   队友侧已改成引擎计时（每个可驱类型一格），不走这里。
+-- ★ 只用于目标侧（getTargetDispelType），队友侧不走这里。
 local function pickTypeByCurve(unit, ids, curve)
     if not ids then return nil end
     for i = 1, #ids do
@@ -1418,7 +1415,7 @@ function CyberDeck:ZONE_CHANGED_INDOORS()
 end
 
 function CyberDeck:PLAYER_ENTERING_WORLD()
-    -- 过场后光环缓存可能失效 -> 强制重绑探针的候选过滤
+    -- 过场后光环缓存可能失效 -> 强制重建队伍驱散容器（重绑候选过滤）
     if self.RefreshGroupAuraContainers then self:RefreshGroupAuraContainers() end
     state.mapID = C_Map.GetBestMapForUnit("player") or 0
 end
@@ -1808,9 +1805,7 @@ end
 --   1) 每个类型一条 slot，candidateFilters.includeDispelTypes 只放这一个类型
 --   2) SetUnit 会冲掉候选过滤 -> 换单位后必须重绑再 UpdateAllAuras
 --   3) 按钮锚 UIParent 的那一格 + SetClipsChildren(true)，cell 子框负责可见范围
--- ================================================================
-
--- ================================================================
+--
 -- 驱散探针诊断（/cy dispelprobe）
 --
 -- 像素本身由 core/group_aura.lua（严格照搬 Shingen）负责，这里只读状态：

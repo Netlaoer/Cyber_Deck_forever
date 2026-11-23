@@ -801,7 +801,7 @@ function F:GetAuraInstanceIDs(unit, filter, maxCount, sortRule)
     --   "Auras cannot be accessed when secret while tainted by '<addon>'"
     -- 这时返回 **nil**（不是空表）—— 区分「读不到」和「确实没有减益」：
     --   空表 = 真的没有减益 -> 可以安全地不驱散
-    --   nil  = 读不到（可能受限）-> 那一格交给引擎染色，别写
+    --   nil  = 读不到（可能受限）-> 目标侧退回基线，不写入
     if C_UnitAuras.GetUnitAuraInstanceIDs then
         local ok, ids
         if sortRule ~= nil then
