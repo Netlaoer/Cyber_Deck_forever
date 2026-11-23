@@ -21,3 +21,7 @@ gui_window_state.json
 .claude/
 
 logic_gui_Tools.py
+
+# ── 本地启动器（每人本机路径不同，不随仓库分发）─────────
+*.lnk
+启动工具面板.cmd
