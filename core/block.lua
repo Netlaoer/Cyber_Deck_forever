@@ -21,6 +21,9 @@ local BLOCK_FIX_CONFIG = {
     blockSpacing = 0,                          -- 色块间距
 }
 
+--- 色块几何/容量（队伍驱散像素要用同一套宽高，见 core/group_aura.lua）
+CyberDeck.BLOCK_FIX_CONFIG = BLOCK_FIX_CONFIG
+
 --- 索引 -> (r, g)：r 是方案号，g 是套内序号
 local function EncodeBlockChannels(index)
     local scheme = math.floor((index - 1) / BLOCK_SCHEME_SPAN)
@@ -37,7 +40,9 @@ local colorBars = CreateFrame("Frame", "CyberDeckColorBars", UIParent)
 colorBars:SetPoint("TOPLEFT", UIParent, "TOPLEFT", 0, 0)
 colorBars:SetSize(screenWidth, BLOCK_FIX_CONFIG.blockHeight)
 colorBars:SetFrameStrata("TOOLTIP") -- 确保在最上层
-colorBars:SetFrameLevel(10000)
+-- 层级必须与 Shingen 一致：色条 9001、队伍驱散 AuraContainer 9003（见 core/group_aura.lua）。
+-- 之前用 10000/10001 时，引擎建的 AuraButton 落在色条下面，整行读到的是色条自己的 b=0。
+colorBars:SetFrameLevel(9001)
 -- colorBars:Raise()   -- Increases the frame's frame level above all other frames in its strata
 
 -- 存储纹理的数组 (1 到 capacity)

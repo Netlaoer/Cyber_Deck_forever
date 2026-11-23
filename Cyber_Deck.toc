@@ -33,6 +33,7 @@ core/forever.lua
 core/quickbutton.lua
 core/config.lua
 core/block.lua
+core/group_aura.lua
 core/macro.lua
 core/keybinds.lua
 core/auras.lua

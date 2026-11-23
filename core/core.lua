@@ -222,6 +222,9 @@ function CyberDeck:SlashCommand(input, editbox)
     elseif command == "macro" then
         self:PrintMacroDebug()
         return
+    elseif command == "dispelprobe" then
+        self:PrintDispelProbeDebug()
+        return
     elseif command == "options" or command == "config" then
         if self.optionsFrame and self.optionsFrame.name and Settings and Settings.OpenToCategory then
             pcall(Settings.OpenToCategory, self.optionsFrame.name)

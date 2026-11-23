@@ -155,8 +155,9 @@ Cyber_Deck/
 1. `embeds.xml` + `Libs/LibRangeCheck-3.0`
 2. `core/core.lua`（建 `CyberDeck` 对象、AceDB、事件注册）
 3. `core/forever_data.lua`（离线技能表）→ `core/forever.lua`（无限服适配层）
-4. `core/quickbutton.lua` → `core/config.lua` → `core/block.lua` → `core/macro.lua`
-   → `core/keybinds.lua` → `core/auras.lua`
+4. `core/quickbutton.lua` → `core/config.lua` → `core/block.lua` → `core/group_aura.lua`
+   → `core/macro.lua` → `core/keybinds.lua` → `core/auras.lua`
+   （`group_aura.lua` 必须在 `block.lua` 之后：它要用 `CyberDeck.BLOCK_FIX_CONFIG`）
 5. `class/*.lua`（当前只有 `Paladin.lua`）
 6. `main.lua` → `gui.lua`
 
@@ -664,6 +665,7 @@ cd _work && D:/DevTools/pyenv-re313/Scripts/python.exe test_dispel_all.py
 | `/cy options` / `/cy config` | Ace3 选项面板 |
 | `/cy enable` / `/cy disable` | Ace3 启用/停用插件本体 |
 | `/cy macro` | 打印宏数量 / 键位总数 / 动态与静态分界，并抽样打印 `s号 + 键位 + 宏体`（宏表改过时用它核对，不用记编号） |
+| `/cy dispelprobe` | 打印驱散探针状态：格号映射、容器/槽位数、按钮尺寸与显示、**计时文字当前颜色 b**、以及该单位实际可驱减益（脱战可读）。用来区分「引擎没染色」和「解码错位」 |
 | `/cy dpsmode` / `manual` / `assistant` | 输出模式切换 ⚠️ **无限服无「一键辅助」，对应像素已删除，命令保留只是不生效** |
 | `/cy message 文本` | 聊天框测试输入 |
 
@@ -1035,9 +1037,20 @@ cd _work && D:/DevTools/pyenv-re313/Scripts/python.exe test_dispel_all.py
 
 驱散就一件事：**把「队友身上有哪种可驱减益、还剩多久」画进像素，Python 侧据此选人施法。**
 
-做法**整段照搬 Shingen Forever 版**（`Forever/Shingen/core/block.lua:1148-1386`）：
+实现是 **`core/group_aura.lua`，逐函数照搬 Shingen Forever 版**
+（`Forever/Shingen/core/block.lua:1140-1470`：`AnchorAuraPixelButton` /
+`CreateAuraPixelCell` / `MakeDurationColorCurve` / `MakeDispelDurationSlotInitializer` /
+`CollectGroupDispelDefs` / `CreateGroupMemberAuraContainer` /
+`RebindContainerSpellFilters` / `RefreshGroupAuraContainers`），
+只改了命名（`Shingen`→`CyberDeck`、`shingenUnit`→`cdUnit`）。
+
 每个能驱的类型占一格，蓝通道写「该类型在队友身上最长的剩余秒数」，
 颜色由引擎的**原生计时文字**驱动，Lua 侧完全不读光环。
+
+**层级必须与 Shingen 一致**：色条 `TOOLTIP` / level **9001**，队伍驱散 AuraContainer
+`TOOLTIP` / level **9003**（`core/group_aura.lua` 的 `AURA_DURATION_LEVEL`）。
+早期版本用 10000/10001，引擎建的 AuraButton 会落到色条下面，整行读到的都是色条自己的
+`b=0` —— 表现就是「脱战战斗都不驱散」。
 
 ### 像素编码
 
@@ -1084,19 +1097,19 @@ Shingen 的写法完全绕开类型：**引擎自己算剩余时间并给计时�
 插件侧只提供「格子在哪、秒数怎么映射到蓝通道」，不参与任何光环读取，
 所以脱战/战斗是同一套，不存在两条通道抢同一格。
 
-### 三条硬约束（缺一不可）
+### 三条硬约束（缺一不可，都在 `core/group_aura.lua`）
 
 ```lua
 -- 1) 每个类型一条 slot，候选过滤只放这一个类型
-probe.container:AddAuraSlot(slotKey, "HARMFUL", {
-    candidateFilters = { includeDispelTypes = { [typeName] = true } },
+container:AddAuraSlot(key, "HARMFUL", {
+    candidateFilters = { includeDispelTypes = { [auraType] = true } },
     sortMethod = AuraContainerSortMethod.ExpirationOnly,   -- 同类取剩余最长
     sortDirection = AuraContainerSortDirection.Reverse,
-    initializeFrame = ...,
+    initializeFrame = MakeDispelDurationSlotInitializer(pixelIndex),
 })
 
 -- 2) SetUnit 会冲掉候选过滤 -> 换单位后必须重绑再刷新
-probe.container:SetUnit(unit)
+container:SetUnit(unit)
 probe.container:SetAuraSlotCandidateFilters(slotKey, { includeDispelTypes = { [typeName] = true } })
 probe.container:UpdateAllAuras()
 
@@ -1142,6 +1155,29 @@ button:SetPoint("TOPLEFT", UIParent, "TOPLEFT", rect.x, 0)
 ```bash
 D:/DevTools/pyenv-re313/Scripts/python.exe Arasaka/check_dispel.py
 ```
+
+游戏内先敲 `/cy dispelprobe`，判读：
+
+| 现象 | 结论 | 下一步 |
+|---|---|---|
+| `按钮=无` 或 `slots=0` | 槽位没建（`AddAuraSlot` 失败或格号算不出） | 看聊天框有没有「驱散槽注册失败」 |
+| `按钮=有`、`文字b=0.000`、而 `实际可驱减益 N 条` | **引擎没把计时文字画上去** | 容器绑定失效，见下 |
+| `文字b=0.2xx`，但 `check_dispel.py` 读 0 | 解码几何错位（行宽/格中心） | 对比 `[2b]` 的原始 RGB |
+| `实际可驱减益 读不到`（战斗中） | 正常，secret 限制 | 脱战再看 |
+
+**容器绑定失效**：`SetUnit` 会被引擎在过场/战斗中重置，且候选过滤会被 `SetUnit` 冲掉。
+只在「换单位」时绑一次不够 —— 登录/`/reload` 那一刻引擎可能还没就绪，绑失败就永久恒 0。
+
+现在的处理和 Shingen 一样（`core/group_aura.lua` 的 `RefreshGroupAuraContainers`）：
+
+- **每次花名册变化（`updateGroup`）都对所有成员重绑一遍**：
+  `SetUnit` → `SetAuraSlotCandidateFilters`（每槽新建过滤表）→ `UpdateAllAuras`；
+- `PLAYER_ENTERING_WORLD`（过场/重载）再刷一次；
+- 容器常驻复用，只 `SetEnabled` / `Show` / `Hide`，从不 `Destroy`（AuraContainer 的
+  slot 不能删，只能丢弃整个容器重来，换专精时由 `ReleaseGroupAuraContainers` 处理）。
+
+脱战时若检测到「队友有可驱减益、但那一格仍是黑的」，聊天框会自动红字提示一次
+（`CheckDispelProbeRendering`），不用等你自己发现。
 
 打印每个槽位的 `生命值 / 职责 / 魔法 / 疾病 / 中毒` 与对应格号，
 以及每格中心解出来的值。某项该有值却是 0，就看这一格是不是没建槽（`/cy gui` 看色条）。
@@ -1248,7 +1284,7 @@ D:/DevTools/pyenv-re313/Scripts/python.exe Arasaka/check_dispel.py
 | 找低血队友 / 缺 buff 队友 / 驱散目标 | 25 个 `get_*` / `count_*` 选择器 | `Arasaka/utils.py` |
 | 热键查找与发送 | `get_hotkey()` + `send_key_to_wow()` | `Arasaka/utils.py` |
 | 像素 → state_dict | `build_state_dict()`（含 spells 子字典、group 展开） | `Arasaka/GetPixels.py` |
-| 光环受限（战斗中） | **引擎原生计时文字给「驱散」格上色**（Shingen 同款）→ 插件不读光环，脱战/战斗同一套 | `main.lua` 的 `UpdateDispelProbeUnit` |
+| 光环受限（战斗中） | **引擎原生计时文字给「驱散」格上色**（Shingen 同款）→ 插件不读光环，脱战/战斗同一套 | `core/group_aura.lua` |
 | 决策层热重载 | `reload_logic_modules()` | `logic_gui_Tools.py` |
 | 宏体创建 | `loadPlayerMacros()` → `CreateMacro()`（进入世界时一次，无手动命令） | `core/macro.lua` |
 

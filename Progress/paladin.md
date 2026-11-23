@@ -425,7 +425,7 @@ python Arasaka/other/query_forever.py 4987
   `start`/`num`/驱散偏移 ↔ `config.yml` ↔ 510 容量 ↔ 队伍区间无重叠；
 - **宏位一致性**（`_work/test_macro_budget.py`）：`macroKind` 45 键 × 7 修饰 = 315、
   314 个宏位与 `keymap/paladin.yml` 逐行同序；
-- 游戏内 `/cy spec` 看专精/点数/解析到的 spellID，`/cy gui` 核对像素，
+- 游戏内 `/cy spec` 看专精/点数/解析到的 spellID，`/cy dispelprobe` 看驱散探针（槽位/按钮/文字颜色 b/实际可驱减益），`/cy gui` 核对像素，
   `/cy gui` 看驱散格的像素值，`/cy secrets` 看当前上下文的 secret 限制。
 
 ---
