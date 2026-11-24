@@ -83,10 +83,10 @@ Cyber_Deck/
 │   ├── core.lua            # 插件初始化、AceDB、事件注册、斜杠命令、开关切换
 │   ├── forever_data.lua    # 无限服离线技能表（{level, spellID}，ForeverDB 1.60.1）
 │   ├── forever.lua         # 无限服适配层（专精判定/技能名→rank/光环扫描/物品分组）
-│   ├── config.lua          # roleMap / events / keymap 等配置（无对应机制的表已清空）
-│   ├── block.lua           # 像素色条创建（255个色块 + 法术充能进度条）
+│   ├── config.lua          # roleMap / events / EnumPowerType（无对应机制的表已清空）
+│   ├── block.lua           # 像素色条创建（510 格 + 终止格，写像素唯一入口）
 │   ├── macro.lua           # 动态宏创建（@raid/party 智能切换）
-│   ├── keybinds.lua        # 扫描动作条按键绑定
+│   ├── keybinds.lua        # 扫描**玩家动作条**的法术/宏 → CyberDeck.keybindings（插件自身宏走 override binding，不在此列）
 │   ├── auras.lua           # 光环状态机（当前仅圣骑士段；其它职业按经典 ID 补即可）
 │   ├── quickbutton.lua     # 四按钮可拖拽面板（爆发/AOE/输出模式/驱散）
 │   └── Spell_Misc_EmotionHappy.blp  # 插件图标
@@ -214,7 +214,7 @@ CyberDeck.target      -- 目标信息
 CyberDeck.group       -- 队伍单位信息
 CyberDeck.groupList   -- 队伍单位列表
 CyberDeck.defaults    -- AceDB 默认值
-CyberDeck.keybindings -- 按键绑定映射
+CyberDeck.keybindings -- 动作条按键绑定映射（由 core/keybinds.lua 产出，预留）
 CyberDeck.timeElapsed -- OnUpdate 计时器
 ```
 
@@ -243,12 +243,13 @@ char = { level, aoeMode, cooldowns, dpsMode, delay, potion,
 | `F:updateSpellKnown()` | main.lua | 生成防御/进攻驱散曲线点位（按已学会法术动态算） |
 | `F:updateShapeshiftForm()` | main.lua | 形态（德鲁伊「姿态」块） |
 | `F:updateTargetAuraCount()` | main.lua | 目标光环数量（牧师「目标光环数量」块） |
+| `F:updateTargetCastingInfo()` | main.lua | 目标读条/引导 → 「目标施法」格：**只写可打断的剩余秒数**，不可打断写 0（该格只服务制裁之锤打断） |
 | `F:updateUnitAuraCount(unit)` | main.lua | 单位负面光环计数（通用，被上一条和敌人计数调用） |
 | `CreatTexture(index, value)` | core/block.lua | 写入像素块（参数为索引号+数值） |
 | `creatColorCurveScaling(b)` | main.lua | 非线性颜色曲线编码 |
 | `InitQuickToggleButton()` | quickbutton.lua | 四按钮面板 |
 | `updateAura()` | auras.lua | 光环倒计时 |
-| `updateAuraBlocks()` | auras.lua | 光环像素更新 |
+| `updateAuraBlocks()` | auras.lua | 光环像素更新（`OnUpdate` 低频档每 0.12s 调一次 → 338 圣印剩余） |
 | `F:RefreshTargetJudgeContainer()` | core/group_aura.lua | 目标审判探针：绑 `target` 的 AuraContainer，把 20186 剩余秒数写进 340 格（战斗可用） |
 | `F:RefreshTargetJudgeAuras()` | core/group_aura.lua | 目标减益变化时让上面那条容器立即重新评估 |
 
@@ -591,19 +592,28 @@ D:/DevTools/pyenv-re313/Scripts/python.exe Arasaka/check_dispel.py
 | `test_dispel_logic.py` | 圣骑决策链路：字段 → 像素 → 解码 → `state_dict` → `_pick_dispel_unit`；含 `group.units` 收窄 | 15 项 |
 | `test_dispel_all.py` | 牧师/萨满/法师/德鲁伊/圣骑五个有驱散职业的端到端选人 + 「驱不掉的类型不建格」 | 25 项 |
 | `test_layouts_all.py` | 27 个专精：Lua `ClassBlocks` ↔ `config.yml` 一致、块尾 ≤ 510、队伍区间内无其它像素块、区间互不重叠 | 27×6 |
+| `test_secret_safety.py` | 全仓扫 `notInterruptible` 的布尔判断写法（secret boolean 会抛错）、确认走 `EvaluateColorFromBoolean` | 4 项 |
 | `test_macro_budget.py` | 宏位预算：`core/macro.lua` 键表 ↔ `gen_class_keymap.py` 键表同序、每职业占用 ≤ 上限、`keymap/*.yml` 逐行同序 | 9 职业 |
 | `test_macro_gen.lua` | 用桩跑真正的 `CreateMacro`：键位顺序、`@raidN` 宏体、静态槽分界、40 号队友不退回 raid1 | 14 项 |
 | `test_paladin_layout.lua` | 圣骑士三系 `num` / 驱散偏移 / 圣印剩余 338 边界（40 人） | 12 项 |
+| `test_group_aura.lua` | 队伍驱散容器：每类型一条 slot、单类型过滤、几何、每轮 Refresh 都重绑、鼠标探针 | 27 项 |
+| `test_keybinds.lua` | `keybinds.lua`：macro 槽从宏体解析技能名（不把宏序号当法术 ID）、`GetSpellInfo` / `GetMacroInfo` 抛错不中断整轮扫描 | 12 项 |
+| `test_p0_fixes.lua` | 目标施法格（可打断读条/引导写剩余秒数、不可打断写 0）+ 队伍 buff 格由引擎 slot 写、Lua 停写兜底 + 曲线预建 / 初始化顺序 / 特殊资源映射 / gui 不再劫持 OnEnable / `SPELLS_CHANGED` 换 blocks 后重建容器 | 37 项 |
 | `dump_layouts.lua` | 导出 9 职业 × 27 专精的 `start`/`num`/字段/全部像素键（`test_layouts_all.py` 的数据源） | — |
 | `forever_harness.lua` | 核心逻辑冒烟（`core/*.lua` 的纯逻辑部分，桩化 WoW API） | 34 项 |
 
 一键跑（工作区根目录）：
 
 ```bash
-node -e "..."                       # luaparse 语法：19 个 Lua 文件
+node -e "..."                       # luaparse 语法：21 个 Lua 文件
 HARNESS_DIR="<插件目录>" node run_lua.js forever_harness.lua
 node run_lua.js _work/test_macro_gen.lua
+node run_lua.js _work/test_p0_fixes.lua
+node run_lua.js _work/test_group_aura.lua
+node run_lua.js _work/test_paladin_layout.lua
+node run_lua.js _work/test_keybinds.lua
 D:/DevTools/python313/python.exe _work/test_macro_budget.py
+D:/DevTools/python313/python.exe _work/test_secret_safety.py
 D:/DevTools/pyenv-re313/Scripts/python.exe _work/test_pixel_e2e.py
 D:/DevTools/pyenv-re313/Scripts/python.exe _work/test_layouts_all.py
 cd _work && D:/DevTools/pyenv-re313/Scripts/python.exe test_dispel_logic.py
@@ -680,7 +690,8 @@ cd _work && D:/DevTools/pyenv-re313/Scripts/python.exe test_dispel_all.py
 
 ### 其它调试手段
 
-- `/script SetTestSecret(0)` — 关闭秘密值限制（启动时默认 `SetTestSecret(1)` 开启）
+- `/script SetTestSecret(1)` / `SetTestSecret(0)` — 手动开/关秘密值限制与 `scriptErrors`
+  （**加载时不再自动调用**：这些 CVar 属于用户设置，插件不该覆盖）
 - `Arasaka/other/GetRGB.py` — 获取像素 RGB
 - `Arasaka/other/GetInfo.py` — 打印 state_dict
 - `Arasaka/other/hex_to_decode.py` — 十六进制解码
@@ -1073,7 +1084,12 @@ cd _work && D:/DevTools/pyenv-re313/Scripts/python.exe test_dispel_all.py
 | 3 | 魔法 | 剩余秒数 |
 | 4 | 疾病 | 剩余秒数 |
 | 5 | 中毒 | 剩余秒数 |
-| 6/7 | 圣光守望 / 圣光誓约 | 仅神圣 |
+| 6/7 | 圣光守望 / 圣光誓约 | 仅神圣；与驱散同源，走引擎 slot（`groups.auras` → `includeSpellIDs`） |
+
+> 6/7 这两格**也由引擎写**（`core/group_aura.lua` 的 buff slot），不是 Lua 读光环：
+> Lua 路径（`main.lua:OnUpdateUnitAura`）在容器建好后由 `CyberDeck.groupAuraBuffEngineReady`
+> 自动停写 —— 否则战斗中 `C_UnitAuras` 读不到（secret）会写 0，把引擎算好的剩余秒数盖掉。
+> 建容器失败/单人时标志位为 nil，Lua 路径仍作兜底。
 
 蓝通道取值（与 Shingen 完全一致）：
 
@@ -1211,6 +1227,11 @@ D:/DevTools/pyenv-re313/Scripts/python.exe Arasaka/check_dispel.py
   战斗开始时重置 `SetUnit` 绑定，不重刷的话战斗中容器染色失效、自动驱散不触发；
 - 容器常驻复用，只 `SetEnabled` / `Show` / `Hide`，从不 `Destroy`（AuraContainer 的
   slot 不能删，只能丢弃整个容器重来，换专精时由 `ReleaseGroupAuraContainers` 处理）。
+- **换 `blocks` 之后必须立刻重建**：`loadPlayerBlocks` 会释放队伍驱散/buff、鼠标探针、
+  目标审判三类容器（slot 绑在旧格号上），所以任何调用它的地方都要紧跟一次
+  `RefreshEngineContainers()` —— `SPELLS_CHANGED`（学会新技能 / 新 rank）与
+  `updatePlayerSpecInfo`（换专精）都已接上。漏了就会「脱战学会技能后队友像素停更，
+  直到下次进战斗或花名册变化」。
 
 打印每个槽位的 `生命值 / 职责 / 魔法 / 疾病 / 中毒` 与对应格号，
 以及每格中心解出来的值。某项该有值却是 0，就看这一格是不是没建槽（`/cy gui` 看色条）。
@@ -1358,7 +1379,12 @@ D:/DevTools/pyenv-re313/Scripts/python.exe Arasaka/check_dispel.py
 | `core/forever.lua` 的 debuff 学习表（`dispelTypeFromName` / `LearnDebuffTypes` / `QueryDispelBySpellTable`）+ `db.char.dispelSpellTypes` | **已删除**。「脱战学表→战斗查表」实测走不通（受限时按 ID 查询返回 nil，无法区分命中与读不到），现改为调 `C_UnitAuras.GetAuraDispelTypeColor` 直接取类型（正式服同款） |
 | `main.lua` 的 `clearGroupBlocks` | **已删除**（2026-11-21）。队伍块清零已由 `updateGroup` 重建 + Python 端 `_role_not_zero` 过滤覆盖 |
 | `core/core.lua` help 里的 `/cy dispeltest` | **已删除**。该命令分支从来就不存在 |
-| `core/block.lua` 的 `ClearAllCyberDeckBars` | **保留并已接上调用点**（2026-11-21）。换专精时清掉上一套专精建的计数条，见下方说明 |
+| `core/block.lua` 的 `countBars` / `CreateAutoLayoutBar` / `ClearAllCyberDeckBars` | **曾删除，已还原**（2026-11-24）。原判据是「9 个职业都没配 `countBars` → 从未执行」，但**没配置只说明当前不用，不说明以后不用**（连击点 / 神圣能量 / 充能条都要它）。代码按 HEAD 原文贴回，并加「预留能力，勿删」标注。见 17.5.1 |
+| 不支持职业（死骑/武僧/DH/唤魔师）的 nil 崩 | **已改为空转**（2026-11-24）：`loadPlayerBlocks` 给一套空表，`CreatTexture` 跳过 nil 索引，不再抛 `attempt to index a nil value`；同时清掉了这 4 个职业的历史 `.pyc` |
+| `core/keybinds.lua` + `config.lua` 的 `actionBars` / `keymap` | **曾删除，已还原**（2026-11-24）。它确实有执行、有产出（`CyberDeck.keybindings`），只是当前没有消费方 —— 属「语义性闲置」，按 17.5 的准则应保留。文件、两张表、`OnEnable`/`SPELLS_CHANGED` 里的 `readKeybindings()` 与 `UPDATE_BINDINGS` / `ACTIONBAR_SHOWGRID` / `ACTIONBAR_HIDEGRID` 注册均已还原（`ACTIONBAR_*` 顺带能刷新宏键位） |
+| `Libs/libs/`（整份 Ace3 重复副本）+ 7 个未 include 的 Ace 模块 | **已删除**（2026-11-24）。`Libs/libs` 是整份 Ace3 的副本（781KB），TOC / embeds.xml 都不加载；另删掉 `AceComm` / `AceHook` / `AceTimer` / `AceBucket` / `AceLocale` / `AceSerializer` / `AceTab`（插件代码零引用、embeds.xml 也未 include）。`Libs` 由 1.6MB 降到 715KB |
+| `main.lua` 的 `TestFiltered` / `getSpellChargesInfo` | **曾删除，已还原**（2026-11-24）。两者都是**诊断工具**（逐个过滤器 token 检查光环是否被过滤 / 打印技能充能结构），排查 P0-2 那类「过滤器认不认」的问题时正是需要的。`TestFiltered` 原样还原；`getSpellChargesInfo` 从 `local` 改成 `CyberDeck:` 方法（原来调用点被注释，等于永远调不到），可用 `/run CyberDeck:getSpellChargesInfo()`。**空的 `SPELL_UPDATE_CHARGES` handler 不恢复**：注册后什么都不做，纯事件开销 |
+| `gui.lua` 的 `OnEnable` 覆盖 + 文件级 `RegisterOptionsTable` | **已删除**（2026-11-24）。`core/core.lua` 的 `OnEnable` 本来就做了那四步初始化，覆盖等于登录时 `blocks` / 队伍容器建拆两遍；选项表统一由 `OnInitialize` 注册（那时 `CyberDeck.options` 已是 gui.lua 的 tab 版） |
 
 > ⚠️ **删「当前没调用」的代码前先分类**：
 > - **通用件**（跨职业可复用、其它职业将来会用到）→ **保留**
@@ -1371,37 +1397,41 @@ D:/DevTools/pyenv-re313/Scripts/python.exe Arasaka/check_dispel.py
 > - **判不准的一律保留**：留着不花钱，删了要重写 |
 >
 > ⚠️ **「触发条件不存在」≠「这个函数多余」**：
-> 换专精要重建计数条这件事本身是必须的；只是**触发它的条件**在本服不一样
+> 有些逻辑本身必须存在，只是**触发它的条件**在本服不一样
 > —— 本服没有「切天赋/切专精」那两个施法，改天赋走 `PLAYER_TALENT_UPDATE`，
-> 所以调用点得自己补在 `main.lua` 的 `updatePlayerSpecInfo()`：专精索引变了就清一次。
+> 这类要补调用点，不是删函数。反过来，**连配置源和消费方都没有**的链路就该删（见 17.5.1）。
 
-### 17.5.1 切专精要重建计数条（`ClearAllCyberDeckBars`）
+> **2026-11-24 补充：三档判定（`countBars` / `keybinds` / `TestFiltered` 误删后立的规矩）**
+> 1. **结构性死** —— TOC/embeds 不加载、无任何调用点、事件注册后无 handler → 可删
+> 2. **重复执行** —— 同一逻辑已在他处完整跑过 → 可删
+> 3. **语义性闲置** —— 有执行或有产出，只是**当前**没有消费方 → **不删**，只加
+>    `-- 预留：暂无消费方/勿删` 标注
+> 4. 拿不准 → 留着（留着不花钱，删了要重写）
 
-本服 1.60.1 = TBC 2.4.3，**有双天赋系统**（每职业两棵树）。切换后像素块配置要整套换，
-`CreateAutoLayoutBar` 建出来的计数条也必须重建，否则残留上一套专精的旧条。
+### 17.5.1 `countBars` / 施法计数条：删过一次，已还原（2026-11-24）
 
-```lua
--- main.lua: updatePlayerSpecInfo()
-local newSpecIndex = self:GetActiveSpecIndex()
--- 换专精：把上一套专精建的计数条清掉重建。
--- 本服没有「切天赋/切专精」那两个施法，改天赋走 PLAYER_TALENT_UPDATE，所以在这里补。
--- 必须在 loadPlayerBlocks 之前清：CreateAutoLayoutBar 开头有
--- 「spellIdToBar 已有就复用」的复检，不先清会命中旧映射，条不会重建。
-if self.state.specIndex and self.state.specIndex ~= newSpecIndex then
-    self:ClearAllCyberDeckBars()
-end
-self.state.specIndex = newSpecIndex
-```
+这条是「按『当前没人用』删代码」的典型反例，留作记录。
 
-两个要点：
-- **必须在 `loadPlayerBlocks` 之前清** —— `CreateAutoLayoutBar` 开头有
-  `if spellIdToBar[spellId] then return spellIdToBar[spellId] end` 复检，
-  不先清会命中旧映射，新专精的条根本不会重建。
-- **只在专精真的变了时才清** —— `PLAYER_TALENT_UPDATE` 每次加天赋点都会触发，
-  无条件清会导致频繁重建。
+删之前的判断（三条都成立）：
+1. `blocks.countBars` 只由 `class/*.lua` 的 `countBars` 表填充，**9 个职业一个都没配**；
+2. 没有配置 → `updatePlayerBarInfo()` 遍历空表 → `CreateAutoLayoutBar` 一次都不跑；
+3. `countBarEndTexture` 因此永远不会被创建，Python/GUI 也没有任何字段读它。
 
-> 当前 9 个职业的 `class/*.lua` 里 `countBars` 配置数都是 0，
-> 所以这条路径暂时走不到实际效果；但调用点已就位，将来配了 countBars 就能正确重建。
+但这三条只证明「**现在不跑**」，不证明「**永远不需要**」。计数条是连击点 / 神圣能量 / 法术充能的可视化载体，接盗贼、德鲁伊或给圣骑加圣能显示时必须用它 —— 删掉等于把一个能力移出仓库。
+
+还原范围（按 HEAD 原文贴回）：
+
+| 文件 | 还原内容 |
+|---|---|
+| `core/block.lua` | `BAR_CONFIG`、`CyberDeckCountBars` 框、`createdBars` / `spellIdToBar` / `nextAvailableIndex` / `countBarEndTexture`、`CreateAutoLayoutBar`、`ClearAllCyberDeckBars`，并加「预留能力，勿删」注释 |
+| `main.lua` | `blocks.countBars` 字段与合并分支、`updatePlayerBarInfo()` 及其调用、`updatePlayerSpecInfo()` 里的清条调用 |
+| `gui.lua` | `formatCountBarsLines()`、「施法计数」分区、「索引, 法术冷却, 施法计数。」提示文案 |
+
+> **启用方式**：在 `class/*.lua` 的 `buildBlocks()` 返回值里加
+> `countBars = { [1] = { valueType = "charge", minValue = 0, maxValue = 5, spellId = 123 } }`，
+> `main.lua` 的 `updatePlayerBarInfo()` 就会自动建条（`valueType`：`castCount` / `charge`）。
+>
+> 保留 `clearAllTextures()`：换专精时它仍然负责把 510 格像素总线整体归零。
 
 ### 17.6 重复造轮子的真实代价（本仓库踩过的坑）
 
@@ -1420,6 +1450,8 @@ self.state.specIndex = newSpecIndex
 | 以为「打字时会乱按键」要加守卫 | 只 grep 了 `Arasaka/` 就下结论——调度层 `logic_gui_Tools.py` 早就有 `if not sd.get("有效性"): continue` | 查横切逻辑要连调度层一起看；职业逻辑里重复判反而会漂移 |
 | 惩戒对着满血怪也放愤怒之锤 | 「目标生命值」像素从来没建过（`class/Paladin.lua` 缺块 + `config.yml` 缺字段）→ Python 读到恒 0 → `目标生命值 <= 20` 恒真 | 新增状态字段要**三处同步**：Lua 块定义 + `config.yml` 字段 + Python 读取；用 `_work/test_layouts_all.py` 查断链 |
 | 加了职业后选人函数「不存在」 | 删「当前没调用」的代码时把 `Arasaka/utils.py` 的通用选择器一起删了 | 通用工具库不按「当前是否被调用」判断死活；加职业前先确认 `utils.py` 25 个函数齐全 |
+| `CyberDeck.keybindings` 里宏记录的名字/图标全错 | `GetActionInfo(slot)` 对 `macro` 类型返回的第二值是**宏序号（1~120）**，被直接当法术 ID 传给了 `C_Spell.GetSpellInfo` —— 序号撞上真实 ID 就记成别的法术，查不到就整条丢弃 | 宏要先 `GetMacroInfo` 读宏体、取第一个 `/cast` 后的技能名（跳过 `[group:raid,@raid5]` 这类条件），再 `ResolveSpellID`；这个循环跑在 `C_Timer` 回调里，`GetSpellInfo` 必须 pcall，否则一次抛错整轮扫描中断 |
+| 每帧报 `attempt to perform boolean test on local 'notInterruptible' (a secret boolean value)` | `UnitCastingInfo` / `UnitChannelInfo` 的可打断标记是 **secret boolean**，写了 `if notInterruptible` | secret 值一律不能做条件判断：交给引擎侧 `EvaluateColorFromBoolean(notInterruptible, 不可打断的颜色, 可打断的颜色)` 选颜色，插件侧不分支。`_work/test_secret_safety.py` 会扫这种写法 |
 
 ### 17.7 加完功能的自检顺序
 
