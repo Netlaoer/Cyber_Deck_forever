@@ -592,7 +592,7 @@ D:/DevTools/pyenv-re313/Scripts/python.exe Arasaka/check_dispel.py
 | `test_dispel_logic.py` | 圣骑决策链路：字段 → 像素 → 解码 → `state_dict` → `_pick_dispel_unit`；含 `group.units` 收窄 | 15 项 |
 | `test_dispel_all.py` | 牧师/萨满/法师/德鲁伊/圣骑五个有驱散职业的端到端选人 + 「驱不掉的类型不建格」 | 25 项 |
 | `test_layouts_all.py` | 27 个专精：Lua `ClassBlocks` ↔ `config.yml` 一致、块尾 ≤ 510、队伍区间内无其它像素块、区间互不重叠 | 27×6 |
-| `test_secret_safety.py` | 全仓扫 `notInterruptible` 的布尔判断写法（secret boolean 会抛错）、确认走 `EvaluateColorFromBoolean` | 4 项 |
+| `test_secret_safety.py` | 全仓扫 secret 值的危险写法：`notInterruptible` 布尔判断、`UnitGUID` 的 `guid and` / `guid ==` 比较；确认走 `EvaluateColorFromBoolean` 与 `isSecretValue` 守卫 | 6 项 |
 | `test_macro_budget.py` | 宏位预算：`core/macro.lua` 键表 ↔ `gen_class_keymap.py` 键表同序、每职业占用 ≤ 上限、`keymap/*.yml` 逐行同序 | 9 职业 |
 | `test_macro_gen.lua` | 用桩跑真正的 `CreateMacro`：键位顺序、`@raidN` 宏体、静态槽分界、40 号队友不退回 raid1 | 14 项 |
 | `test_paladin_layout.lua` | 圣骑士三系 `num` / 驱散偏移 / 圣印剩余 338 边界（40 人） | 12 项 |
@@ -1452,6 +1452,7 @@ D:/DevTools/pyenv-re313/Scripts/python.exe Arasaka/check_dispel.py
 | 加了职业后选人函数「不存在」 | 删「当前没调用」的代码时把 `Arasaka/utils.py` 的通用选择器一起删了 | 通用工具库不按「当前是否被调用」判断死活；加职业前先确认 `utils.py` 25 个函数齐全 |
 | `CyberDeck.keybindings` 里宏记录的名字/图标全错 | `GetActionInfo(slot)` 对 `macro` 类型返回的第二值是**宏序号（1~120）**，被直接当法术 ID 传给了 `C_Spell.GetSpellInfo` —— 序号撞上真实 ID 就记成别的法术，查不到就整条丢弃 | 宏要先 `GetMacroInfo` 读宏体、取第一个 `/cast` 后的技能名（跳过 `[group:raid,@raid5]` 这类条件），再 `ResolveSpellID`；这个循环跑在 `C_Timer` 回调里，`GetSpellInfo` 必须 pcall，否则一次抛错整轮扫描中断 |
 | 每帧报 `attempt to perform boolean test on local 'notInterruptible' (a secret boolean value)` | `UnitCastingInfo` / `UnitChannelInfo` 的可打断标记是 **secret boolean**，写了 `if notInterruptible` | secret 值一律不能做条件判断：交给引擎侧 `EvaluateColorFromBoolean(notInterruptible, 不可打断的颜色, 可打断的颜色)` 选颜色，插件侧不分支。`_work/test_secret_safety.py` 会扫这种写法 |
+| 进副本后鼠标划过队友就报 `attempt to compare local 'guid' (a secret string value)` | `UnitGUID("mouseover")` 在 taint 下是 **secret string**，写了 `if guid and guid == lastMouseoverGUID` | secret 时**放弃去重**：`isSecretValue(guid)` 为真就每次鼠标事件都重绑（只多花一点开销），非 secret 才比较与缓存。`note:` 判断「有没有单位」也必须先过 secret 守卫，`if not guid` 同样会抛 |
 
 ### 17.7 加完功能的自检顺序
 

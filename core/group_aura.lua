@@ -368,6 +368,12 @@ end
 local mouseoverContainer = nil
 local lastMouseoverGUID = nil
 
+--- secret 值不能做条件判断、也不能比较（本服 UnitGUID 在 taint 下就是 secret string）。
+--- 返回 true 表示「读得到但不能用」，调用方要按「拿不到可用信息」处理。
+local function isSecretValue(v)
+    return type(issecretvalue) == "function" and issecretvalue(v) or false
+end
+
 function CyberDeck:ReleaseMouseoverDispelContainer()
     if mouseoverContainer then
         ReleaseFrame(mouseoverContainer)
@@ -397,17 +403,24 @@ function CyberDeck:RefreshMouseoverDispelContainer()
     end
 
     -- 只在鼠标指向的单位变化时重绑（同一单位由引擎自己跟）
+    -- ⚠️ UnitGUID 在本服是 **secret string**：不能写 `guid and ...`，也不能 `guid == ...`
+    -- （2026-11-24 副本内报错：attempt to compare local 'guid' (a secret string value)）。
+    -- secret 时放弃去重，每次事件都重绑一遍 —— 只多一点开销，绝不会崩。
     local guid = UnitGUID("mouseover")
-    if guid and guid == lastMouseoverGUID then
-        return
-    end
-    lastMouseoverGUID = guid
-
-    if not guid then
-        if mouseoverContainer then
-            mouseoverContainer:Hide()
+    if isSecretValue(guid) then
+        lastMouseoverGUID = nil
+    else
+        if guid == lastMouseoverGUID then
+            return
         end
-        return
+        lastMouseoverGUID = guid
+
+        if not guid then
+            if mouseoverContainer then
+                mouseoverContainer:Hide()
+            end
+            return
+        end
     end
 
     -- ★ 只驱散友方：鼠标指向敌对/中立单位时，敌方身上的减益会被 HARMFUL 过滤
