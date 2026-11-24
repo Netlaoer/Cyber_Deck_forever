@@ -1670,6 +1670,7 @@ state:
     圣印: {step: 18, type: "int" }
     圣印剩余: {step: 338, type: "int" }
     鼠标可驱: {step: 339, type: "int" }
+    目标智慧审判: {step: 340, type: "int" }
     自动攻击: {step: 22, type: "int" }
     神恩术: {step: 23, type: "int" }
     圣光灌注: {step: 24, type: "int" }
@@ -1722,6 +1723,7 @@ state:
     圣印: {step: 18, type: "int" }
     圣印剩余: {step: 338, type: "int" }
     鼠标可驱: {step: 339, type: "int" }
+    目标智慧审判: {step: 340, type: "int" }
     自动攻击: {step: 22, type: "int" }
     神恩术: {step: 23, type: "int" }
     圣光灌注: {step: 24, type: "int" }

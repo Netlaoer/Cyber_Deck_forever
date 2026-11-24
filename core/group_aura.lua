@@ -416,3 +416,205 @@ function CyberDeck:RefreshMouseoverDispelAuras()
         end
     end
 end
+
+-- ================================================================
+-- 目标审判 debuff 探针：给 target 建一条引擎容器，
+-- 一条 slot 只认玩家自己挂的「智慧审判」(20186)，
+-- 引擎把剩余秒数写进「目标智慧审判」格：
+--   0     = 目标身上没有（按钮隐藏，露出色条底色）
+--   1     = 有，但不足 1 秒
+--   2..254 = 剩余秒数
+--   255   = 永久/超过 255 秒
+--
+-- 与队友/鼠标探针同源：引擎自己算剩余时间，插件侧不读光环，
+-- 所以战斗中（auraSecret=true）同样有效。
+-- 只在目标变化 / 过场 / 进出战斗时重绑 SetUnit，不每帧刷。
+-- ================================================================
+local TARGET_JUDGE_SPELL = 20186
+local targetJudgeContainer = nil
+
+function CyberDeck:ReleaseTargetJudgeContainer()
+    if targetJudgeContainer then
+        ReleaseFrame(targetJudgeContainer)
+        targetJudgeContainer = nil
+    end
+end
+
+function CyberDeck:RefreshTargetJudgeContainer()
+    local pixelIndex = self.blocks and self.blocks.state and self.blocks.state["目标智慧审判"]
+    if not pixelIndex or not UnitExists("target") then
+        if targetJudgeContainer then
+            targetJudgeContainer:Hide()
+        end
+        if not pixelIndex then
+            self:ReleaseTargetJudgeContainer()
+        end
+        return
+    end
+
+    if not targetJudgeContainer then
+        EnsureAuraContainerLoaded()
+        local ok, created = pcall(function()
+            local c = CreateFrame("AuraContainer", "CyberDeckTargetJudgeSlots",
+                UIParent, "CustomAuraContainerTemplate")
+            c:SetPoint("TOPLEFT", UIParent, "TOPLEFT", 0, 0)
+            c:SetEnabled(true)
+            c:SetFrameStrata(AURA_DURATION_STRATA)
+            c:SetFrameLevel(AURA_DURATION_LEVEL)
+            c:AddAuraSlot("target_judge", "HARMFUL|PLAYER", {
+                candidateFilters = { includeSpellIDs = { [TARGET_JUDGE_SPELL] = true } },
+                sortMethod = AuraContainerSortMethod.ExpirationOnly,
+                sortDirection = AuraContainerSortDirection.Reverse,
+                initializeFrame = MakeDispelDurationSlotInitializer(pixelIndex),
+            })
+            return c
+        end)
+        if ok and created then
+            targetJudgeContainer = created
+        else
+            self.targetJudgeError = (ok and "返回 nil" or tostring(created))
+            return
+        end
+    end
+
+    targetJudgeContainer.cdUnit = "target"
+    -- SetUnit 会冲掉候选过滤 -> 必须重设，再 UpdateAllAuras
+    targetJudgeContainer:SetUnit("target")
+    targetJudgeContainer:SetAuraSlotCandidateFilters("target_judge", {
+        includeSpellIDs = { [TARGET_JUDGE_SPELL] = true },
+    })
+    if targetJudgeContainer.UpdateAllAuras then
+        targetJudgeContainer:UpdateAllAuras()
+    end
+    targetJudgeContainer:SetEnabled(true)
+    targetJudgeContainer:Show()
+end
+
+--- 目标身上这条 debuff 变化时立即让引擎重新评估（上/掉都及时反映）
+function CyberDeck:RefreshTargetJudgeAuras()
+    if targetJudgeContainer and targetJudgeContainer.cdUnit == "target"
+        and targetJudgeContainer:IsShown() then
+        if targetJudgeContainer.UpdateAllAuras then
+            targetJudgeContainer:UpdateAllAuras()
+        end
+    end
+end
+
+--- 诊断用：拿到目标审判探针容器
+function CyberDeck:GetTargetJudgeContainer()
+    return targetJudgeContainer
+end
+
+
+-- ================================================================
+-- 救赎之魂（27827）职责覆盖
+--
+-- 作用：该队员身上有 27827 时，在他的「职责」格上盖一张 b=0 的整格纹理。
+-- 消费端（utils.py 的 _role_not_zero）读到职责 0 -> 整个跳过这个人，
+-- 不加血、不驱散、不补 buff。光环消失按钮隐藏，露出下面正常的职责像素。
+--
+-- ★ 只能用 HELPFUL 裸过滤，不能加 PLAYER：
+--   救赎之魂可能是别的牧师给的，限制 PLAYER 就只认自己上的。
+-- ★ 覆盖容器要比队伍容器高一层（AURA_DURATION_LEVEL + 1），
+--   否则会被正常的职责像素盖住。
+-- ================================================================
+local GROUP_ROLE_ZERO_AURA_ID = 27827
+local groupRoleOverlayContainers = {}   -- [memberIndex] = AuraContainer
+
+local function MakeRoleZeroInitializer(index)
+    return function(button)
+        button:SetSize(AURA_BLOCK_W, AURA_BLOCK_H)
+        ConfigureAuraButtonMouse(button)
+        button:SetPoint("TOPLEFT", UIParent, "TOPLEFT", AuraBlockXOffset(index), 0)
+        -- 用绝对层级而不是 GetFrameLevel()+1：引擎按钮的读取在受限上下文里可能被拒，
+        -- 绝对层级（9005）已经高于色条 9001 和队伍容器 9003，效果一样且不会抛错
+        button:SetFrameLevel(AURA_DURATION_LEVEL + 2)
+
+        local bg = button:CreateTexture(nil, "ARTWORK")
+        bg:SetAllPoints(button)
+        local r, g = EncodeBlockChannels(index)
+        bg:SetColorTexture(r, g, 0, 1)   -- 索引通道照旧，数值通道写 0
+    end
+end
+
+local function RoleZeroSlotKey(memberIndex)
+    return "group_" .. memberIndex .. "_role_zero"
+end
+
+local function CreateGroupMemberRoleOverlay(memberIndex, groups)
+    EnsureAuraContainerLoaded()
+
+    -- 不传全局名：容器释放后重建时固定名会撞 "already exists"，无名帧没这个问题
+    local container = CreateFrame("AuraContainer", nil, UIParent, "CustomAuraContainerTemplate")
+    container:SetPoint("TOPLEFT", UIParent, "TOPLEFT", 0, 0)
+    container:SetEnabled(true)
+    container:SetFrameStrata(AURA_DURATION_STRATA)
+    container:SetFrameLevel(AURA_DURATION_LEVEL + 1)
+
+    local pixelIndex = GroupAuraPixelIndex(groups, memberIndex, groups.role)
+    container:AddAuraSlot(RoleZeroSlotKey(memberIndex), "HELPFUL", {
+        candidateFilters = { includeSpellIDs = { [GROUP_ROLE_ZERO_AURA_ID] = true } },
+        sortMethod = AuraContainerSortMethod.ExpirationOnly,
+        sortDirection = AuraContainerSortDirection.Normal,
+        initializeFrame = MakeRoleZeroInitializer(pixelIndex),
+    })
+
+    return container
+end
+
+function CyberDeck:ReleaseGroupRoleOverlayContainers()
+    for memberIndex, container in pairs(groupRoleOverlayContainers) do
+        ReleaseFrame(container)
+        groupRoleOverlayContainers[memberIndex] = nil
+    end
+end
+
+--- 按当前花名册给每个队员建/重绑救赎之魂覆盖容器
+function CyberDeck:RefreshGroupRoleOverlayContainers()
+    local groups = self.blocks and self.blocks.groups
+    if not groups or not groups.start or not groups.num or not groups.role then
+        self:ReleaseGroupRoleOverlayContainers()
+        return
+    end
+
+    local used = {}
+    for _, unit in ipairs(self.groupList or {}) do
+        local obj = self.group and self.group[unit]
+        if obj and obj.index then
+            local memberIndex = obj.index
+            local pixelIndex = GroupAuraPixelIndex(groups, memberIndex, groups.role)
+            if pixelIndex > 0 and pixelIndex <= BLOCK.capacity then
+                used[memberIndex] = true
+                local container = groupRoleOverlayContainers[memberIndex]
+                -- 换专精后职责格号会变（神圣 num=7 / 防护惩戒 num=5），必须重建
+                if container and container.cdPixelIndex ~= pixelIndex then
+                    ReleaseFrame(container)
+                    groupRoleOverlayContainers[memberIndex] = nil
+                    container = nil
+                end
+                if not container then
+                    container = CreateGroupMemberRoleOverlay(memberIndex, groups)
+                    container.cdPixelIndex = pixelIndex
+                    groupRoleOverlayContainers[memberIndex] = container
+                end
+                -- SetUnit 会冲掉候选过滤 -> 重设后再 UpdateAllAuras
+                container:SetUnit(unit)
+                container:SetAuraSlotCandidateFilters(RoleZeroSlotKey(memberIndex), {
+                    includeSpellIDs = { [GROUP_ROLE_ZERO_AURA_ID] = true },
+                })
+                if container.UpdateAllAuras then
+                    container:UpdateAllAuras()
+                end
+                container:SetEnabled(true)
+                container:Show()
+            end
+        end
+    end
+
+    for memberIndex, container in pairs(groupRoleOverlayContainers) do
+        if not used[memberIndex] then
+            container:SetEnabled(false)
+            container:Hide()
+        end
+    end
+end

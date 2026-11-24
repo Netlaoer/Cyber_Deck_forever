@@ -249,6 +249,8 @@ char = { level, aoeMode, cooldowns, dpsMode, delay, potion,
 | `InitQuickToggleButton()` | quickbutton.lua | 四按钮面板 |
 | `updateAura()` | auras.lua | 光环倒计时 |
 | `updateAuraBlocks()` | auras.lua | 光环像素更新 |
+| `F:RefreshTargetJudgeContainer()` | core/group_aura.lua | 目标审判探针：绑 `target` 的 AuraContainer，把 20186 剩余秒数写进 340 格（战斗可用） |
+| `F:RefreshTargetJudgeAuras()` | core/group_aura.lua | 目标减益变化时让上面那条容器立即重新评估 |
 
 **斜杠命令**：`/cy help / cd / aoemode / potion / dispel / delay / gui / spec / secrets / options / message`（完整表见「十四、调试技巧」）
 
@@ -408,6 +410,7 @@ state_dict = {
     "延迟": int,
     "驱散开关": int,
     "鼠标可驱": int,      # 圣骑专属：鼠标指向的人身上可驱减益的剩余秒数（引擎写，>0=有可驱；战斗中同样有效）
+    "目标智慧审判": int,   # 圣骑防护/神圣专属：目标身上智慧审判(20186)的剩余秒数（0=没有 >=2=有；引擎写，战斗中同样有效）
     "5码敌人": int,
     "目标施法": int,
     # …职业专属字段若干，名字与 step 由该职业自己定
@@ -446,6 +449,7 @@ state_dict = {
 | 职业ID | 1=战士 2=圣骑 3=猎人 4=盗贼 5=牧师 6=DK 7=萨满 8=法师 9=术士 10=武僧 11=德 12=DH 13=唤魔师（无限服只有 1~5、7~9、11 存在） |
 | 驱散（每类型一格） | 剩余秒数：0=没有 1=不足一秒 2~254=秒 255=永久/超 255；圣骑士建 魔法/疾病/中毒 三格，见十六点五 |
 | 鼠标可驱 | 圣骑专属：鼠标指向的人身上本职业可驱减益的**剩余秒数**（绑 `mouseover` 的 AuraContainer 引擎写，本职业能驱的几类取最长；`>0`=有可驱。战斗中同样有效，见十六点五） |
+| 目标智慧审判 | 圣骑**防护/神圣**专属：目标身上 `智慧审判`（debuff 20186）的**剩余秒数**（绑 `target` 的 AuraContainer 引擎写，只认玩家自己挂的；0=没有 1=不足一秒 ≥2=有。战斗中同样有效）。防护（按当前圣印分支）与神圣（固定智慧印）都用它决定审判放不放，见 `paladin_logic.py:_judge_gate` |
 
 ---
 

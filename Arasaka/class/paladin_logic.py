@@ -99,6 +99,22 @@ def _ret_seal(spells, mana):
     return _first_known_seal(spells, (SEAL_WISDOM, SEAL_JUSTICE))
 
 
+# 审判门控（只用于防护）。无限服审判不消耗圣印，所以可以放心按圣印分支：
+#   愤怒圣印：审判 debuff 没有维持价值，CD 好了就放
+#   智慧圣印：目标身上已经有智慧审判(20186)就不放，省一个 GCD 和一次蓝
+#   其它圣印：维持原行为（CD 好了就放）
+# 目标智慧审判像素：0 = 没有，1 = 不足 1 秒，>=2 = 有（数值就是剩余秒数）
+JUDGE_DEBUFF_MIN = 2
+
+
+def _judge_gate(seal, target_judge_remaining):
+    if seal == SEAL_FURY:
+        return True
+    if seal == SEAL_WISDOM:
+        return target_judge_remaining < JUDGE_DEBUFF_MIN
+    return True
+
+
 # 施法失败像素 = 失败技能的块索引（无限服 class/Paladin.lua 布局：27 制裁之锤 / 28 圣盾术）
 # 自由祝福在无限服只是静态宏、没有块，失败时写不出像素，这里就不重试它。
 failed_spell_map = {
@@ -180,6 +196,9 @@ def run_paladin_logic(state_dict, spec_name):
     鼠标可驱 = _int(state_dict, "鼠标可驱")
     当前圣印 = _int(state_dict, "圣印")
     圣印剩余 = _int(state_dict, "圣印剩余")
+    # 目标身上的智慧审判 debuff（20186）剩余秒数：0 = 没有，>=2 = 有
+    # 引擎 AuraContainer 写（class/Paladin.lua 340 号格），战斗中同样有效
+    目标智慧审判 = _int(state_dict, "目标智慧审判")
 
     正义之怒 = _int(state_dict, "正义之怒")
 
@@ -299,7 +318,8 @@ def run_paladin_logic(state_dict, spec_name):
                 if 当前圣印 != SEAL_WISDOM and not 施法:
                     current_step = "施放 智慧圣印"
                     action_hotkey = get_hotkey(0, "智慧圣印")
-                elif 审判CD == 0:
+                # 审判：目标已有智慧审判(20186)就不放（奶骑审判只为维持 debuff，省 GCD/省蓝）
+                elif 审判CD == 0 and _judge_gate(SEAL_WISDOM, 目标智慧审判):
                     current_step = "进攻 审判"
                     action_hotkey = get_hotkey(0, "审判")
                 elif 神圣打击CD == 0:
@@ -357,7 +377,10 @@ def run_paladin_logic(state_dict, spec_name):
             elif 神圣之盾CD == 0 and 五码敌人 >= 1:
                 current_step = "补 神圣之盾"
                 action_hotkey = get_hotkey(0, "神圣之盾")
-            elif 审判CD == 0 and _in_melee(目标距离):
+            # 审判：看圣印分支（无限服审判不消耗圣印）
+            #   愤怒印 -> 不看 debuff；智慧印 -> 目标已有智慧审判就不放
+            elif (审判CD == 0 and _in_melee(目标距离)
+                  and _judge_gate(当前圣印, 目标智慧审判)):
                 current_step = "审判"
                 action_hotkey = get_hotkey(0, "审判")
             # 奉献：身边 ≥2 个才放（5 码内敌人数，不是全场人数）

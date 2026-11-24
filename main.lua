@@ -502,6 +502,10 @@ function CyberDeck:loadPlayerBlocks(specIndex)
     if self.ReleaseMouseoverDispelContainer then
         self:ReleaseMouseoverDispelContainer()
     end
+    -- 目标审判探针同理：格号可能变（340）
+    if self.ReleaseTargetJudgeContainer then
+        self:ReleaseTargetJudgeContainer()
+    end
 end
 
 function CyberDeck:loadPlayerMacros()
@@ -1400,6 +1404,14 @@ function CyberDeck:updateGroup()
             .. tostring(self.groupAuraLoadError or "文件加载报错") .. "）。"
             .. "敲 /console scriptErrors 1 再 /reload 看具体错误。")
     end
+    -- 目标审判探针（340）跟着 blocks 走
+    if self.RefreshTargetJudgeContainer then
+        self:RefreshTargetJudgeContainer()
+    end
+    -- 救赎之魂覆盖：花名册变了要跟着重建
+    if self.RefreshGroupRoleOverlayContainers then
+        self:RefreshGroupRoleOverlayContainers()
+    end
 
     -- 宏位上限告警：31 号以后没有可用的施法宏，决策层也不会去选（Python 只读 30 槽）
     local limit = CyberDeck.GROUP_TARGET_LIMIT or 30
@@ -1444,6 +1456,8 @@ end
 function CyberDeck:PLAYER_ENTERING_WORLD()
     -- 过场后光环缓存可能失效 -> 强制重建队伍驱散容器（重绑候选过滤）
     if self.RefreshGroupAuraContainers then self:RefreshGroupAuraContainers() end
+    if self.RefreshTargetJudgeContainer then self:RefreshTargetJudgeContainer() end
+    if self.RefreshGroupRoleOverlayContainers then self:RefreshGroupRoleOverlayContainers() end
     state.mapID = C_Map.GetBestMapForUnit("player") or 0
 end
 
@@ -1501,6 +1515,14 @@ function CyberDeck:PLAYER_REGEN_DISABLED()
     if self.RefreshMouseoverDispelContainer then
         self:RefreshMouseoverDispelContainer()
     end
+    -- 目标审判探针同样重绑
+    if self.RefreshTargetJudgeContainer then
+        self:RefreshTargetJudgeContainer()
+    end
+    -- 救赎之魂覆盖容器同样重绑（引擎会重置 SetUnit 绑定）
+    if self.RefreshGroupRoleOverlayContainers then
+        self:RefreshGroupRoleOverlayContainers()
+    end
 end
 
 function CyberDeck:PLAYER_REGEN_ENABLED()
@@ -1513,6 +1535,14 @@ function CyberDeck:PLAYER_REGEN_ENABLED()
     -- 鼠标探针同步重绑
     if self.RefreshMouseoverDispelContainer then
         self:RefreshMouseoverDispelContainer()
+    end
+    -- 目标审判探针同步重绑
+    if self.RefreshTargetJudgeContainer then
+        self:RefreshTargetJudgeContainer()
+    end
+    -- 救赎之魂覆盖容器同步重绑
+    if self.RefreshGroupRoleOverlayContainers then
+        self:RefreshGroupRoleOverlayContainers()
     end
 end
 
@@ -1773,6 +1803,10 @@ end
 
 function CyberDeck:PLAYER_TARGET_CHANGED()
     self:updateTargetFullInfo()
+    -- 换了目标要重绑目标审判探针（SetUnit + 重设候选过滤）
+    if self.RefreshTargetJudgeContainer then
+        self:RefreshTargetJudgeContainer()
+    end
 end
 
 function CyberDeck:UPDATE_MOUSEOVER_UNIT()
@@ -1994,6 +2028,10 @@ function CyberDeck:UNIT_AURA(_, unit, info)
     -- 实际 token（party1 等），所以只要鼠标探针容器在绑定状态就刷新，不精确匹配。
     if self.RefreshMouseoverDispelAuras then
         self:RefreshMouseoverDispelAuras()
+    end
+    -- 目标身上的减益变化：让目标审判探针立即重新评估（审判 debuff 上/掉都要及时）
+    if unit == "target" and self.RefreshTargetJudgeAuras then
+        self:RefreshTargetJudgeAuras()
     end
     local obj = group[unit]
     if not obj then return end
