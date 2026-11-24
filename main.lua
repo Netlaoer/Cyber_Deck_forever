@@ -2111,35 +2111,6 @@ function CyberDeck:PrintDispelProbeDebug()
     end
 end
 
---- 目标审判探针诊断（/cy judgeprobe）
-function CyberDeck:PrintJudgeProbeDebug()
-    local idx = self.blocks and self.blocks.state and self.blocks.state["目标智慧审判"]
-    local container = self.GetTargetJudgeContainer and self:GetTargetJudgeContainer()
-    self:Print(("[审判探针] 格=%s 容器=%s")
-        :format(tostring(idx or "|cffff0000无|r"),
-            container and "有" or "|cffff0000无|r"))
-    if self.targetJudgeError then
-        self:Print(("  创建错误: %s"):format(tostring(self.targetJudgeError)))
-    end
-    if not UnitExists("target") then
-        self:Print("  没有目标")
-        return
-    end
-    -- 目标身上的减益：脱战能读到 name/spellId；战斗中 name 是 secret，只提示读不到
-    local found = {}
-    for i = 1, 40 do
-        local name, _, _, _, _, _, _, _, _, spellId = UnitDebuff("target", i)
-        if issecretvalue(name) then
-            found[#found + 1] = "(战斗读不到)"
-            break
-        end
-        if name == nil then break end
-        found[#found + 1] = ("%s(%s)"):format(tostring(name), tostring(spellId))
-    end
-    self:Print("  目标减益: " .. (#found > 0 and table.concat(found, ", ") or "|cffff0000无|r"))
-    self:Print("  期望智慧审判 ID = 20354（对不上就是这里的问题）")
-end
-
 -- 队伍驱散格**只有引擎一个写入方**（Shingen 同款）：
 -- 计时文字的颜色由引擎按剩余秒数算，Lua 侧不读光环、也不写那一格。
 -- 脱战/战斗是同一套，不存在两条通道抢同一格的问题。

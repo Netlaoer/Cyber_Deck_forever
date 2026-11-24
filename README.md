@@ -685,7 +685,6 @@ cd _work && D:/DevTools/pyenv-re313/Scripts/python.exe test_dispel_all.py
 | `/cy enable` / `/cy disable` | Ace3 启用/停用插件本体 |
 | `/cy macro` | 打印宏数量 / 键位总数 / 动态与静态分界，并抽样打印 `s号 + 键位 + 宏体`（宏表改过时用它核对，不用记编号） |
 | `/cy dispelprobe` | 打印驱散探针状态：格号映射、容器/槽位数、按钮尺寸与显示、**计时文字当前颜色 b**、以及该单位实际可驱减益（脱战可读）。用来区分「引擎没染色」和「解码错位」 |
-| `/cy judgeprobe` | 打印目标审判探针状态：340 格、容器是否建成、创建错误、目标身上全部减益的 **名字 + 法术 ID**（脱战可读）。用来核对 20354 是否本服真实的「智慧审判」debuff ID |
 | `/cy dpsmode` / `manual` / `assistant` | 输出模式切换 ⚠️ **无限服无「一键辅助」，对应像素已删除，命令保留只是不生效** |
 | `/cy message 文本` | 聊天框测试输入 |
 
