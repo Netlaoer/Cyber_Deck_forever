@@ -101,7 +101,7 @@ def _ret_seal(spells, mana):
 
 # 审判门控（只用于防护）。无限服审判不消耗圣印，所以可以放心按圣印分支：
 #   愤怒圣印：审判 debuff 没有维持价值，CD 好了就放
-#   智慧圣印：目标身上已经有智慧审判(20186)就不放，省一个 GCD 和一次蓝
+#   智慧圣印：目标身上已经有智慧审判(20354)就不放，省一个 GCD 和一次蓝
 #   其它圣印：维持原行为（CD 好了就放）
 # 目标智慧审判像素：0 = 没有，1 = 不足 1 秒，>=2 = 有（数值就是剩余秒数）
 JUDGE_DEBUFF_MIN = 2
@@ -196,7 +196,7 @@ def run_paladin_logic(state_dict, spec_name):
     鼠标可驱 = _int(state_dict, "鼠标可驱")
     当前圣印 = _int(state_dict, "圣印")
     圣印剩余 = _int(state_dict, "圣印剩余")
-    # 目标身上的智慧审判 debuff（20186）剩余秒数：0 = 没有，>=2 = 有
+    # 目标身上的智慧审判 debuff（20354）剩余秒数：0 = 没有，>=2 = 有
     # 引擎 AuraContainer 写（class/Paladin.lua 340 号格），战斗中同样有效
     目标智慧审判 = _int(state_dict, "目标智慧审判")
 
@@ -320,7 +320,7 @@ def run_paladin_logic(state_dict, spec_name):
                 if 当前圣印 != SEAL_WISDOM and not 施法:
                     current_step = "施放 智慧圣印"
                     action_hotkey = get_hotkey(0, "智慧圣印")
-                # 审判：目标已有智慧审判(20186)就不放（奶骑审判只为维持 debuff，省 GCD/省蓝）
+                # 审判：目标已有智慧审判(20354)就不放（奶骑审判只为维持 debuff，省 GCD/省蓝）
                 elif 审判CD == 0 and _judge_gate(SEAL_WISDOM, 目标智慧审判):
                     current_step = "进攻 审判"
                     action_hotkey = get_hotkey(0, "审判")

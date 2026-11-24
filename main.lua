@@ -2137,7 +2137,7 @@ function CyberDeck:PrintJudgeProbeDebug()
         found[#found + 1] = ("%s(%s)"):format(tostring(name), tostring(spellId))
     end
     self:Print("  目标减益: " .. (#found > 0 and table.concat(found, ", ") or "|cffff0000无|r"))
-    self:Print("  期望智慧审判 ID = 20186（对不上就是这里的问题）")
+    self:Print("  期望智慧审判 ID = 20354（对不上就是这里的问题）")
 end
 
 -- 队伍驱散格**只有引擎一个写入方**（Shingen 同款）：

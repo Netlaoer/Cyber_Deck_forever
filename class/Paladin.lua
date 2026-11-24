@@ -129,7 +129,7 @@ local function buildBlocks(dispelTypes, groupAuras)
         -- > 0 = 鼠标指向的人身上有本职业能驱的减益。战斗中同样有效（引擎算，不读光环）。
         [339] = { type = "block", name = "鼠标可驱" },
 
-        -- 目标智慧审判（debuff 20186）：引擎 AuraContainer 写（绑 target，
+        -- 目标智慧审判（debuff 20354）：引擎 AuraContainer 写（绑 target，
         -- 只认玩家自己挂的这条），0 = 目标身上没有，>=2 = 有（数值是剩余秒数）。
         -- 防护/神圣用它决定「审判该不该放」，见 Arasaka/class/paladin_logic.py:_judge_gate。
         [340] = { type = "block", name = "目标智慧审判" },

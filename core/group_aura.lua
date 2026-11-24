@@ -491,7 +491,7 @@ end
 
 -- ================================================================
 -- 目标审判 debuff 探针：给 target 建一条引擎容器，
--- 一条 slot 只认玩家自己挂的「智慧审判」(20186)，
+-- 一条 slot 只认玩家自己挂的「智慧审判」(20354)，
 -- 引擎把剩余秒数写进「目标智慧审判」格：
 --   0     = 目标身上没有（按钮隐藏，露出色条底色）
 --   1     = 有，但不足 1 秒
@@ -502,7 +502,7 @@ end
 -- 所以战斗中（auraSecret=true）同样有效。
 -- 只在目标变化 / 过场 / 进出战斗时重绑 SetUnit，不每帧刷。
 -- ================================================================
-local TARGET_JUDGE_SPELL = 20186
+local TARGET_JUDGE_SPELL = 20354
 local targetJudgeContainer = nil
 
 function CyberDeck:ReleaseTargetJudgeContainer()
