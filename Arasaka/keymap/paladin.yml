@@ -316,3 +316,4 @@
 312: {unit: 0, 技能: "力量祝福", 热键: "ALT-CTRL-SHIFT-8"}
 313: {unit: 0, 技能: "开始攻击", 热键: "ALT-CTRL-SHIFT-9"}
 314: {unit: 0, 技能: "清洁术", 热键: "ALT-CTRL-SHIFT-0"}
+315: {unit: 0, 技能: "圣光闪现", 热键: "ALT-CTRL-SHIFT-="}

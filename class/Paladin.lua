@@ -196,5 +196,8 @@ CyberDeck.MacrosList = {
         [32] = "力量祝福",
         -- 防护的"鼠标指向驱散"（关闭 /cy dispel 时使用）
         [34] = "[@mouseover]清洁术",
+        -- 惩戒自疗：固定打给自己。动态宏（unit N）在团队里会指向 raidN，
+        -- 自疗必须走 unit 0 的 [@player]，否则会去治 raid1
+        [35] = "[@player]圣光闪现",
     },
 }

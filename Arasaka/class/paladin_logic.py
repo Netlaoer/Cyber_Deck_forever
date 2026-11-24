@@ -285,10 +285,12 @@ def run_paladin_logic(state_dict, spec_name):
         else:
             if 圣盾术CD == 0 and 生命值 < 15:
                 current_step = "施放 圣盾术"
-                action_hotkey = get_hotkey(1, "圣盾术")
+                # 圣盾术是静态宏（staticSpells[7]），没有按单位分的宏位；写 unit 1 会取到 None
+                action_hotkey = get_hotkey(0, "圣盾术")
             elif 圣疗术CD == 0 and 圣盾术CD > 0 and 生命值 < 15:
                 current_step = "施法 圣疗术"
-                action_hotkey = get_hotkey(1, "圣疗术")
+                # 自救走 [@player] 静态宏（staticSpells[9]），不要用 unit 1（团队里是 raid1）
+                action_hotkey = get_hotkey(0, "圣疗术")
             elif 战斗 :
                 守望单位, _ = get_unit_with_aura(state_dict, "圣光守望")
                 # 圣光誓约：坦克身上没有就补（5 分钟长 buff，只挂一个）
@@ -430,8 +432,8 @@ def run_paladin_logic(state_dict, spec_name):
             action_hotkey = get_hotkey(0, "清洁术")
         elif not 正在读条 and not 移动 and 0 < 生命值 < 45 and 能量值 >= 35:
             current_step = f"自疗 圣光闪现 ({生命值}%)"
-            # 用 unit 1：宏体自带 [nogroup,@player]，单人时会自动落到自己
-            action_hotkey = get_hotkey(1, "圣光闪现")
+            # 自疗走 staticSpells[35] 的 [@player]（unit 0）：动态宏在团队里会打给 raidN
+            action_hotkey = get_hotkey(0, "圣光闪现")
         elif 目标施法 > 0 and 制裁之锤CD == 0:
             current_step = "制裁之锤 打断"
             action_hotkey = get_hotkey(0, "制裁之锤")
