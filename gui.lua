@@ -1,5 +1,4 @@
 local addon, ns = ...
-local AC = LibStub("AceConfig-3.0")
 local ACD = LibStub("AceConfigDialog-3.0")
 
 local function CharCfg()
@@ -374,8 +373,8 @@ CyberDeck Tinkerer是由Fuyutsuki Electronics研发的一块|cFF00FF00免费|r�
     },
 }
 
-AC:RegisterOptionsTable("CyberDeck_Options", CyberDeck.options, nil)
-
+-- 选项表由 core/core.lua 的 OnInitialize 统一注册（那时 CyberDeck.options 已经是本文件的版本），
+-- 这里不再重复 RegisterOptionsTable。
 function CyberDeck:OpenInfoGUI()
     ACD:SetDefaultSize("CyberDeck_Options", 520, 480)
     ACD:Open("CyberDeck_Options")
@@ -383,17 +382,4 @@ function CyberDeck:OpenInfoGUI()
     if root and root.SetStatusText then
         root:SetStatusText(GetFooterStatusText())
     end
-end
-
--- Cyber Deck: 注入额外初始化逻辑 (原 init.lua)
-local origOnEnable = CyberDeck.OnEnable
-local overrideApplied = false
-function CyberDeck:OnEnable(...)
-    origOnEnable(self, ...)
-    if overrideApplied then return end
-    overrideApplied = true
-    self:GetCharacterSpecInfo()
-    self:updateSpellKnown()
-    self:updatePlayerBlocks()
-    self:updateAuraIconByEnteringWorld()
 end

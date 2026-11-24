@@ -80,7 +80,6 @@ function CyberDeck:OnEnable()
     self:RegisterEvent("SPELLS_CHANGED")
     self:RegisterEvent("ACTIONBAR_HIDEGRID")
     self:RegisterEvent("ACTIONBAR_SHOWGRID")
-    self:RegisterEvent("SPELL_UPDATE_CHARGES")
     self:RegisterEvent("UPDATE_MOUSEOVER_UNIT")
     if self.StartFrameUpdates then
         self:StartFrameUpdates()
@@ -397,8 +396,9 @@ function SetTestSecret(set)
     end
 end
 
--- /script SetTestSecret(0)
-SetTestSecret(1)
+-- 加载时不再自动改 CVar：secret*RestrictionsForced / scriptErrors 都是用户自己的设置，
+-- 插件覆盖它们等于替用户把 secret 限制和报错显示打开（scriptErrors=1 是一定生效的那个）。
+-- 需要复现受限上下文时手动执行：/script SetTestSecret(1)；恢复：/script SetTestSecret(0)
 
 function CyberDeck:IterateGroupMembers(reversed, forceParty)
     local unit = (not forceParty and IsInRaid()) and 'raid' or 'party'

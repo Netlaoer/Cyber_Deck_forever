@@ -2,10 +2,11 @@ if UnitClassBase("player") ~= "HUNTER" then return end
 local addon, ns = ...
 
 --[[
-    class/Hunter.lua — 无限服(1.60.1 / Interface 16001)版 · 骨架
+    class/Hunter.lua — 无限服(1.60.1 / Interface 16001)版 · 像素块布局
     ------------------------------------------------------------------
-    ⚠️ 本文件是**骨架**：像素块布局已按无限服规范排好，但**决策逻辑还没写**。
-       对应的 Arasaka/class/hunter_logic.py 尚未实现，因此装了插件也不会有动作。
+    像素块布局已按无限服规范排好，**决策逻辑在 Arasaka/class/hunter_logic.py**
+    （run_hunter_logic），config.yml 的专精段与 keymap/hunter.yml 都已配好。
+    本文件只负责「块名 -> 索引」与宏表，不承担决策。
 
     与正式服版的区别：
     1. 技能用 name 而不是 spellId；main.lua 按名称解析到"已学会的 rank"，
@@ -23,11 +24,11 @@ local addon, ns = ...
       86+1 起  预留给该职业特有的光环块
 
     技能名来自 endgametools 的无限服职业法术页（经典 60 级技能组 + 天赋）。
-    要接决策层时：
-      1. 在 Arasaka/class/hunter_logic.py 实现 run_hunter_logic(state_dict, spec_name)
-      2. 在 Arasaka/config.yml 加 <职业ID>/<专精ID> 段（spells 的键名 = 下面的中文名）
-      3. 在 Arasaka/keymap/hunter.yml 建热键表
-      4. 写 Progress/hunter.md 记录该职业的像素索引与决策优先级
+    改布局时三处必须同步：
+      1. 改下面的索引表
+      2. 改 Arasaka/config.yml 对应专精段的 step
+      3. 重跑 _work/test_layouts_all.py（查 start/num/字段/块尾/区间重叠）
+    决策逻辑在 Arasaka/class/hunter_logic.py，不在本文件。
 ]]
 
 local function buildBlocks()

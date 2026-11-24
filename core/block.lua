@@ -71,6 +71,9 @@ end
 
 -- 更新或创建静态色块 (按索引)
 function CyberDeck:CreatTexture(i, b)
+    -- 没有对应块（本职业没配、或该专精没有这一格）时直接跳过：
+    -- 之前 nil 会撞上下面的数值比较，抛错打断整个调用方
+    if type(i) ~= "number" then return end
     -- 终止格不参与数据写入，否则消费端找不到行尾
     if i > BLOCK_FIX_CONFIG.capacity then return end
     local tex = creatTextureByIndex(i)
@@ -97,6 +100,13 @@ for i = 1, BLOCK_FIX_CONFIG.capacity do
 end
 DrawBlockEndMarker()
 
+-- ================================================================
+-- 施法计数 / 充能条（**预留能力，勿删**）
+-- 目前 9 个职业的 ClassBlocks 都没有 countBars 配置，所以这段一次都不会执行；
+-- 需要时在 class/*.lua 的 buildBlocks 返回值里加：
+--   countBars = { [1] = { valueType = "charge", minValue = 0, maxValue = 5, spellId = 123 } }
+-- 即可由 main.lua 的 updatePlayerBarInfo() 自动建条（valueType: "castCount" / "charge"）。
+-- ================================================================
 local c = 255
 local BAR_CONFIG = {
     count = c,

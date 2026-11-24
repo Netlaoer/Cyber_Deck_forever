@@ -63,13 +63,37 @@ local function creatColorCurveScaling(b)
 end
 
 local curve100 = creatColorCurveScaling(100)
+
+-- 队伍生命曲线必须在进战斗前建好：战斗中首次调用 C_CurveUtil.CreateColorCurve 不被允许
+-- （Shingen core/curves.lua:47-53 同款约定）。取值只有这几种：
+--   100 + inComingHeals(15/40/50) - healAbsorb(15/0)
+for _, b in ipairs({ 85, 115, 125, 135, 140, 150 }) do
+    creatColorCurveScaling(b)
+end
+
 local curve255 = CyberDeck:creatColorCurve(255, 255)
 local castCurve = CyberDeck:creatColorCurve(2.55, 255)
+
+-- UnitPowerType() 返回的是**数值**（0 = MANA），而 EnumPowerType 的键是字符串
+-- （"MANA" / "COMBO_POINTS" ...）。以前直接用 EnumPowerType[powerType] 恒为 nil，
+-- 靠 UnitPower(unit, nil) 默认回落到主资源才碰巧能用；
+-- 接连击点 / 神圣能量这类特殊资源前必须显式换算，否则特殊格永远写不出去。
+local function toPowerEnum(powerType)
+    if type(powerType) == "string" then
+        return EnumPowerType[powerType]
+    end
+    return powerType
+end
+
+local powerTypeName = {}
+for name, id in pairs(EnumPowerType) do
+    if powerTypeName[id] == nil then powerTypeName[id] = name end
+end
 
 local powerCurve = {}
 function CyberDeck:CreatPowerCurve(powerType)
     if powerCurve[powerType] then return end
-    local powerMax = UnitPowerMax("player", EnumPowerType[powerType])
+    local powerMax = UnitPowerMax("player", toPowerEnum(powerType))
     if powerMax >= 250 then
         powerCurve[powerType] = self:creatColorCurve(1, 100)
     else
@@ -128,15 +152,15 @@ local function printSuccSpell(spellID)
     succIndex = succIndex + 1
 end
 
-local function getSpellChargesInfo()
-    local charges = C_Spell.GetSpellCharges(1247378)
-    for k, v in pairs(charges) do
+-- 调试：打印技能的充能字段结构（默认 1247378）。
+-- 原先是 local 函数且调用点被注释，等于永远调不到；还原时改成方法，方便手动跑：
+--   /run CyberDeck:getSpellChargesInfo()
+--   /run CyberDeck:getSpellChargesInfo(<spellID>)
+function CyberDeck:getSpellChargesInfo(spellID)
+    local charges = C_Spell.GetSpellCharges(spellID or 1247378)
+    for k, v in pairs(charges or {}) do
         print(k, v, issecretvalue(v))
     end
-end
-
-function CyberDeck:SPELL_UPDATE_CHARGES(_)
-    -- getSpellChargesInfo()
 end
 
 -- 驱散能力映射
@@ -384,7 +408,9 @@ function CyberDeck:updatePlayerBlocks()
     self:updatePlayerChannelingInfo()               -- 8.引导
     self:updatePlayerHealth()                       -- 11.生命值
     self:updatePlayerPowerType()                    -- 12.能量值
-    self:updateTargetValid()                        -- 15.目标类型
+    -- 15.目标类型：必须先算 canAttack/canAssist，否则登录/重载时已经带着目标
+    -- 也会被 updateTargetValid 写成 0（要等换目标才恢复）
+    self:updateTargetType()
     self:updateGroupType()                          -- 16.队伍类型
     self:updateGroupCount()                         -- 17.队伍人数
 
@@ -412,11 +438,20 @@ local DISPEL_GROUP_FIELDS = {
 }
 
 function CyberDeck:loadPlayerBlocks(specIndex)
-    if not specIndex or not self.ClassBlocks then
+    local t = specIndex and self.ClassBlocks and self.ClassBlocks[specIndex]
+    if not t then
+        -- 本服没有这个职业（死骑/武僧/DH/唤魔师），或该专精没配块：
+        -- 给一套空表，后面所有 blocks.state[...] 都是 nil，CreatTexture 会跳过 nil 索引，
+        -- 插件保持空转，而不是抛 "attempt to index a nil value" 把 OnEnable 打断。
+        blocks = { state = {}, auras = {}, spells = {} }
+        self.blocks = blocks
+        if not self.ClassBlocks and not self.noBlocksWarned then
+            self.noBlocksWarned = true
+            self:Print(("本职业（%s）没有像素块配置，插件不参与（不影响游戏）")
+                :format(tostring(self.state and self.state.classFilename)))
+        end
         return
     end
-    local t = self.ClassBlocks[specIndex]
-    if not t then return end
     blocks = {
         state = {},
         auras = {},
@@ -508,6 +543,17 @@ function CyberDeck:loadPlayerBlocks(specIndex)
     end
 end
 
+--- loadPlayerBlocks 会释放三类引擎容器（队伍驱散/buff、鼠标探针、目标审判），
+--- 因为它们的 slot 绑在旧格号上、删不掉只能丢弃重建。
+--- 所以凡是调用过 loadPlayerBlocks 的地方，blocks 换新之后必须调一次本函数按新格号重建，
+--- 否则对应像素会停更，直到下次进战斗（PLAYER_REGEN_DISABLED）或花名册变化（updateGroup）。
+function CyberDeck:RefreshEngineContainers()
+    if self.RefreshGroupAuraContainers then self:RefreshGroupAuraContainers() end
+    if self.RefreshMouseoverDispelContainer then self:RefreshMouseoverDispelContainer() end
+    if self.RefreshTargetJudgeContainer then self:RefreshTargetJudgeContainer() end
+    if self.RefreshGroupRoleOverlayContainers then self:RefreshGroupRoleOverlayContainers() end
+end
+
 function CyberDeck:loadPlayerMacros()
     if not self.MacrosList then
         return
@@ -567,6 +613,11 @@ function CyberDeck:updatePlayerSpecInfo()
 
     self:updateSpellKnown()                     -- 更新法术已知状态
     self:updatePlayerBlocks()                   -- 更新玩家blocks信息
+    -- updatePlayerBlocks → updateGroup 会重建队伍/审判/救赎之魂容器，但**不会**重建鼠标探针；
+    -- 而上面 loadPlayerBlocks 已经把它释放了，这里补一次（339 格号可能随专精变）。
+    if self.RefreshMouseoverDispelContainer then
+        self:RefreshMouseoverDispelContainer()
+    end
     self:CreatTexture(blocks.state["职业"], self.state.classId / 255)
     self:CreatTexture(blocks.state["专精"], self.state.specIndex / 255)
 end
@@ -643,13 +694,16 @@ local specialPowerMap = {
     ["SOUL_SHARDS"] = "灵魂碎片",
     ["CHI"] = "真气",
 }
+
 function CyberDeck:updatePlayerPower(powerType)
     if blocks then
-        local power = UnitPower("player", EnumPowerType[powerType])
-        local specialPower = specialPowerMap[powerType]
+        local powerEnum = toPowerEnum(powerType)
+        local powerName = type(powerType) == "number" and powerTypeName[powerType] or powerType
+        local power = UnitPower("player", powerEnum)
+        local specialPower = specialPowerMap[powerName]
         if isSec(power) then
             if not powerCurve[powerType] then self:CreatPowerCurve(powerType) end
-            local powerPercent = UnitPowerPercent("player", EnumPowerType[powerType], nil, powerCurve[powerType])
+            local powerPercent = UnitPowerPercent("player", powerEnum, nil, powerCurve[powerType])
             ---@diagnostic disable-next-line: param-type-mismatch
             local _, _, b = powerPercent:GetRGB()
             state.powerPercent = b
@@ -661,7 +715,7 @@ function CyberDeck:updatePlayerPower(powerType)
             end
         else
             -- 无限服没有秘密值系统：法力/怒气等直接按百分比写入 12.能量值
-            local maxPower = UnitPowerMax("player", EnumPowerType[powerType])
+            local maxPower = UnitPowerMax("player", powerEnum)
             local blockIndex = blocks.state["能量值"]
             if blockIndex and maxPower and maxPower > 0 then
                 self:CreatTexture(blockIndex, math.min(1, (power or 0) / maxPower))
@@ -1008,7 +1062,7 @@ function CyberDeck:updateUnitCastingOrChannelingInfo(unit)
             end
         end
     elseif channel then
-        local _, _, _, _, _, _, notInterruptible = UnitChannelInfo("target")
+        local _, _, _, _, _, _, notInterruptible = UnitChannelInfo(unit)
         local channelDurationColor = channel:EvaluateRemainingDuration(castCurve)
         local booleanValue = EvaluateColorFromBoolean(notInterruptible, falseValueWhite, channelDurationColor)
         ---@diagnostic disable-next-line: param-type-mismatch
@@ -1031,22 +1085,46 @@ function CyberDeck:updateUnitCastingOrChannelingInfo(unit)
     end
 end
 
+-- 目标读条 -> 「目标施法」格。唯一消费方是惩戒的「制裁之锤 打断」，
+-- 所以只写**可打断**的读条（剩余秒数）；不可打断写 0，避免白交一次 1 分钟 CD。
+-- 引导（UnitChannelDuration）也算：制裁之锤同样能打断引导。
 function CyberDeck:updateTargetCastingInfo()
     if not blocks or not blocks.state["目标施法"] then return end
-    if not UnitExists("target") then return end
-    local cast = UnitCastingDuration("target")
-    if cast then
-        local _, _, _, _, _, _, _, notInterruptible = UnitCastingInfo("target")
-        local castingDurationColor = cast:EvaluateRemainingDuration(castCurve)
-        local booleanValue = EvaluateColorFromBoolean(notInterruptible, falseValueWhite, castingDurationColor)
-        ---@diagnostic disable-next-line: param-type-mismatch
-        local _, _, b = booleanValue:GetRGB()
-        target.castingDuration = b
-        self:CreatTexture(blocks.state["目标施法"], b)
-    else
+    local index = blocks.state["目标施法"]
+    if not UnitExists("target") then
         target.castingDuration = 0
-        self:CreatTexture(blocks.state["目标施法"], 0)
+        self:CreatTexture(index, 0)
+        return
     end
+
+    local duration = UnitCastingDuration("target")
+    local notInterruptible
+    if duration then
+        _, _, _, _, _, _, _, notInterruptible = UnitCastingInfo("target")
+    else
+        duration = UnitChannelDuration("target")
+        if duration then
+            _, _, _, _, _, _, notInterruptible = UnitChannelInfo("target")
+        end
+    end
+
+    if not duration then
+        target.castingDuration = 0
+        self:CreatTexture(index, 0)
+        return
+    end
+
+    -- ⚠️ notInterruptible 在本服是 **secret boolean**，绝不能写 `if notInterruptible`
+    -- （2026-11-24 线上报错：attempt to perform boolean test on a secret boolean value）。
+    -- 只能交给引擎侧的 EvaluateColorFromBoolean 选颜色，插件侧不做布尔判断：
+    --   可打断   -> 剩余秒数曲线（>0，消费端才会去制裁之锤）
+    --   不可打断 -> falseValueBlack（b=0，消费端不会白交一次 1 分钟 CD）
+    local durationColor = duration:EvaluateRemainingDuration(castCurve)
+    local booleanValue = EvaluateColorFromBoolean(notInterruptible, falseValueBlack, durationColor)
+    ---@diagnostic disable-next-line: param-type-mismatch
+    local _, _, b = booleanValue:GetRGB()
+    target.castingDuration = b
+    self:CreatTexture(index, b)
 end
 
 function CyberDeck:updateTargetDeath()
@@ -1271,11 +1349,17 @@ local function updateUnitIncomingHealsCurve2()
     end
 end
 
+-- 队伍 buff 格的 Lua 兜底读取：只在引擎容器没建起来时才会被用到
+-- （正常情况由 core/group_aura.lua 的 AuraContainer 写，OnUpdateUnitAura 会停写）。
+-- 过滤器只用客户端明确的 PLAYER|HELPFUL：之前多挂的 RAID_IN_COMBAT 语义不明确，
+-- 可能把长 buff（圣光誓约这种 5 分钟）过滤掉，导致兜底永远读成「没有」。
 function CyberDeck:updateUnitFullAura(unit)
     local obj = group[unit]
     if not obj then return end
-    for i = 1, 5 do
-        local okb, buff = pcall(C_UnitAuras.GetBuffDataByIndex, unit, i, "PLAYER|HELPFUL|RAID_IN_COMBAT")
+    -- 扫 10 个：坦身上常有力量/智慧/王者/光环/圣印/合剂等多条 buff，
+    -- 只扫前 5 个会漏掉排在后面的圣光守望/圣光誓约
+    for i = 1, 10 do
+        local okb, buff = pcall(C_UnitAuras.GetBuffDataByIndex, unit, i, "PLAYER|HELPFUL")
         if okb and buff then
             obj.aura[buff.auraInstanceID] = buff
         end
@@ -1314,24 +1398,29 @@ end
 
 function CyberDeck:OnUpdateUnitAura()
     if not blocks or not blocks.groups or not blocks.groups.auras then return end
+    -- 队伍 buff 格由引擎（core/group_aura.lua 的 AuraContainer）接管后，Lua 侧必须停写：
+    -- 战斗中 C_UnitAuras 读不到（secret），这里会写 0，把引擎算好的剩余秒数盖掉。
+    local writeAuraPixels = not self.groupAuraBuffEngineReady
     for unit, data in pairs(group) do
-        for i, spellIds in pairs(blocks.groups.auras) do
-            local index = blocks.groups.start + (data.index - 1) * blocks.groups.num + i
-            local maxAura = getMaxAuraByTable(unit, spellIds)
-            if maxAura and maxAura.auraInstanceID then
-                local okd, duration = pcall(C_UnitAuras.GetAuraDuration, unit, maxAura.auraInstanceID)
-                if maxAura.expirationTime == 0 then
-                    self:CreatTexture(index, 1)
-                elseif duration then
-                    local auraduration = duration:EvaluateRemainingDuration(curve255)
-                    ---@diagnostic disable-next-line: param-type-mismatch
-                    local _, _, b = auraduration:GetRGB()
-                    self:CreatTexture(index, b)
+        if writeAuraPixels then
+            for i, spellIds in pairs(blocks.groups.auras) do
+                local index = blocks.groups.start + (data.index - 1) * blocks.groups.num + i
+                local maxAura = getMaxAuraByTable(unit, spellIds)
+                if maxAura and maxAura.auraInstanceID then
+                    local okd, duration = pcall(C_UnitAuras.GetAuraDuration, unit, maxAura.auraInstanceID)
+                    if maxAura.expirationTime == 0 then
+                        self:CreatTexture(index, 1)
+                    elseif duration then
+                        local auraduration = duration:EvaluateRemainingDuration(curve255)
+                        ---@diagnostic disable-next-line: param-type-mismatch
+                        local _, _, b = auraduration:GetRGB()
+                        self:CreatTexture(index, b)
+                    else
+                        self:CreatTexture(index, 0)
+                    end
                 else
                     self:CreatTexture(index, 0)
                 end
-            else
-                self:CreatTexture(index, 0)
             end
         end
         if blocks.groups.rejuv then
@@ -1790,6 +1879,9 @@ function CyberDeck:SPELLS_CHANGED()
     if not InCombatLockdown() and self.state and self.state.specIndex then
         self:loadPlayerBlocks(self.state.specIndex)
         self:updateSpellKnown()
+        -- loadPlayerBlocks 已把队伍/鼠标/审判三类引擎容器释放掉（slot 绑旧格号），
+        -- 这里必须立刻按新 blocks 重建，否则相关像素要停更到下次进战斗或花名册变化。
+        self:RefreshEngineContainers()
     end
 end
 
@@ -1839,6 +1931,8 @@ function CyberDeck:UPDATE_SHAPESHIFT_FORMS()
     self:updatePlayerMounted()
 end
 
+-- 调试：逐个过滤器 token 打印这条光环是否被过滤掉（排查 P0-2 那类问题时用）。
+--   /run CyberDeck:TestFiltered("player", <auraInstanceID>)
 function CyberDeck:TestFiltered(unit, auraInstanceID)
     local AuraFilters = {
         "HELPFUL",
@@ -2081,6 +2175,7 @@ function CyberDeck:OnUpdate(elapsed)
     self:updatePlayerCastingInfo()
     self:updatePlayerChannelingInfo()
     self:updateUnitCastingOrChannelingInfo("target")
+    self:updateTargetCastingInfo()
     pcall(self.updateUnitCastingOrChannelingInfo, self, "focus")
     self:updateGroupInRangeAndHealth()
     self:updateAura()
@@ -2097,6 +2192,7 @@ function CyberDeck:OnUpdate(elapsed)
         self:updateEnemyCount()
         self:updateItemCoolDown()
         self:UpdateForeverAuras()
+        self:updateAuraBlocks()      -- 338 圣印剩余等「光环型」像素
         self:UpdateForeverAutoAttack()
         -- 队伍驱散容器由 updateGroup（花名册变化）和进/脱战重刷驱动，不在 OnUpdate 轮询
         self.timeElapsed = 0

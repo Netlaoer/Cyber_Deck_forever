@@ -133,11 +133,34 @@ local function CollectGroupDispelDefs(groups)
     return defs
 end
 
+--- 队伍 buff 格：groups.auras[偏移] = { spellID, ... }
+-- 和驱散一样交给引擎计时（战斗中 Lua 读光环是 secret，会写 0 覆盖引擎值）。
+local function CollectGroupAuraDefs(groups)
+    local defs = {}
+    for offset, ids in pairs(groups.auras or {}) do
+        if type(offset) == "number" then
+            local includeSpellIDs = {}
+            if type(ids) == "number" then
+                includeSpellIDs[ids] = true
+            elseif type(ids) == "table" then
+                for _, id in ipairs(ids) do
+                    if type(id) == "number" then includeSpellIDs[id] = true end
+                end
+            end
+            if next(includeSpellIDs) then
+                defs[#defs + 1] = { offset = offset, includeSpellIDs = includeSpellIDs }
+            end
+        end
+    end
+    table.sort(defs, function(a, b) return a.offset < b.offset end)
+    return defs
+end
+
 local function GroupAuraPixelIndex(groups, memberIndex, offset)
     return groups.start + (memberIndex - 1) * groups.num + offset
 end
 
-local function CreateGroupMemberAuraContainer(memberIndex, groups, dispelDefs)
+local function CreateGroupMemberAuraContainer(memberIndex, groups, dispelDefs, auraDefs)
     EnsureAuraContainerLoaded()
 
     local container = CreateFrame("AuraContainer", "CyberDeckGroupAuraSlots_" .. memberIndex, UIParent,
@@ -166,6 +189,28 @@ local function CreateGroupMemberAuraContainer(memberIndex, groups, dispelDefs)
         end
     end
 
+    -- 队伍 buff 格：同一套计时文字（b = 剩余秒数），永久 buff 露出底色 b=1。
+    -- 过滤只按 spellID、不限来源：圣光守望/圣光誓约可能是别的圣骑士上的，
+    -- 按 PLAYER 过滤会判成「没有」-> 每轮重复补。
+    container.cdBuffSlots = {}
+    for _, def in ipairs(auraDefs) do
+        local pixelIndex = GroupAuraPixelIndex(groups, memberIndex, def.offset)
+        if pixelIndex > 0 and pixelIndex <= BLOCK.capacity then
+            local key = "group_" .. memberIndex .. "_aura_" .. def.offset
+            container:AddAuraSlot(key, "HELPFUL", {
+                candidateFilters = { includeSpellIDs = def.includeSpellIDs },
+                sortMethod = AuraContainerSortMethod.ExpirationOnly,
+                sortDirection = AuraContainerSortDirection.Reverse,
+                initializeFrame = MakeDispelDurationSlotInitializer(pixelIndex, container),
+            })
+            table.insert(container.cdBuffSlots, {
+                key = key,
+                includeSpellIDs = def.includeSpellIDs,
+                index = pixelIndex,
+            })
+        end
+    end
+
     return container
 end
 
@@ -179,9 +224,9 @@ local function KickAuraContainer(container, unit)
     end
 end
 
--- 重绑全部驱散槽的候选过滤，并强制容器重新分配光环
+-- 重绑全部槽（驱散 + buff）的候选过滤，并强制容器重新分配光环
 -- 顺序：SetUnit → SetAuraSlotCandidateFilters → UpdateAllAuras（避免 SetUnit 冲掉过滤）
-local function RebindContainerDispelFilters(container, unit)
+local function RebindContainerFilters(container, unit)
     if not container then
         return
     end
@@ -193,6 +238,14 @@ local function RebindContainerDispelFilters(container, unit)
             -- 每次重建过滤表，保持各类独立
             container:SetAuraSlotCandidateFilters(slot.key, {
                 includeDispelTypes = { [slot.auraType] = true },
+            })
+        end
+    end
+
+    if container.cdBuffSlots then
+        for _, slot in ipairs(container.cdBuffSlots) do
+            container:SetAuraSlotCandidateFilters(slot.key, {
+                includeSpellIDs = slot.includeSpellIDs,
             })
         end
     end
@@ -216,6 +269,7 @@ function CyberDeck:ReleaseGroupAuraContainers()
         ReleaseFrame(container)
         groupAuraContainers[memberIndex] = nil
     end
+    self.groupAuraBuffEngineReady = nil
 end
 
 --- 按当前 groupList 为每个成员创建/绑定单位光环槽（花名册变化时调，见 updateGroup）
@@ -227,7 +281,8 @@ function CyberDeck:RefreshGroupAuraContainers()
     end
 
     local dispelDefs = CollectGroupDispelDefs(groups)
-    if #dispelDefs == 0 then
+    local auraDefs = CollectGroupAuraDefs(groups)
+    if #dispelDefs == 0 and #auraDefs == 0 then
         self:ReleaseGroupAuraContainers()
         return
     end
@@ -245,7 +300,7 @@ function CyberDeck:RefreshGroupAuraContainers()
             if not container then
                 -- 战斗中/引擎未就绪时 CreateFrame/AddAuraSlot 可能抛错，
                 -- 不能让它冒泡到 updateGroup（后面的逻辑会被整段跳过）。
-                local ok, created = pcall(CreateGroupMemberAuraContainer, memberIndex, groups, dispelDefs)
+                local ok, created = pcall(CreateGroupMemberAuraContainer, memberIndex, groups, dispelDefs, auraDefs)
                 if ok and created then
                     container = created
                     groupAuraContainers[memberIndex] = container
@@ -262,7 +317,7 @@ function CyberDeck:RefreshGroupAuraContainers()
             end
             if container then
                 container.cdUnit = unit
-                RebindContainerDispelFilters(container, unit)
+                RebindContainerFilters(container, unit)
                 container:SetEnabled(true)
                 container:Show()
             end
@@ -275,12 +330,16 @@ function CyberDeck:RefreshGroupAuraContainers()
             container:Hide()
         end
     end
+
+    -- 引擎已接管队伍 buff 格：main.lua 的 Lua 读光环路径必须停写，
+    -- 否则战斗中读不到会写 0，把引擎写的剩余秒数盖掉。
+    self.groupAuraBuffEngineReady = (#auraDefs > 0 and next(groupAuraContainers) ~= nil) or nil
 end
 
 --- 过场/脱战后重绑全部容器（只重绑，不动布局）
 function CyberDeck:RebindAllGroupAuraContainers()
     for _, container in pairs(groupAuraContainers) do
-        RebindContainerDispelFilters(container, container.cdUnit)
+        RebindContainerFilters(container, container.cdUnit)
     end
 end
 

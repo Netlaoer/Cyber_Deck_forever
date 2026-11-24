@@ -613,9 +613,12 @@ function F:UpdateForeverAuras()
 
     if st["圣印"] then
         local value = 0
+        local sealAuraFound
         for _, seal in ipairs(SEAL_ORDER) do
-            if buffs[seal.name] then
+            local found = buffs[seal.name]
+            if found then
                 value = seal.value
+                sealAuraFound = found
                 break
             end
         end
@@ -638,11 +641,28 @@ function F:UpdateForeverAuras()
                 end
             end
         end
+
+        -- 圣印剩余（338 号格）的数据源：本地计时为主，真实 buff 能读到时用它校正。
+        --   · 脱战可读 buff.expirationTime -> 直接对齐（被驱散/被顶掉立刻反映）
+        --   · 战斗中读不到是常态 -> 继续信施放成功记的 30 秒（MarkForeverAuraCast），到期由 updateAura() 归零
+        local sealAura = CyberDeck.Auras and CyberDeck.Auras["圣印"]
+        if sealAura and not UnitAffectingCombat("player") then
+            local realExp = sealAuraFound and sealAuraFound.expirationTime
+            if type(realExp) == "number" and realExp > 0 and not isSecret(realExp) then
+                sealAura.expirationTime = realExp
+                sealAura.remaining = math.max(0, realExp - now)
+            elseif value == 0 then
+                -- 脱战且一个圣印都读不到 = 真没了，别让本地计时继续挂着
+                sealAura.expirationTime = nil
+                sealAura.remaining = 0
+                sealAura.sealValue = 0
+            end
+        end
+
         -- 战斗中 buff 名/spellID 都读不到（secret），用 auras 的施放计时推算：
         -- 施放成功记 30 秒，到期由 updateAura() 自动清空，归 0 让决策层补。
         -- 战斗外读不到就是真到期了，直接归 0，不查计时（避免被驱散时误判）。
         if value == 0 and UnitAffectingCombat("player") then
-            local sealAura = CyberDeck.Auras and CyberDeck.Auras["圣印"]
             if sealAura and sealAura.expirationTime and now < sealAura.expirationTime then
                 value = sealAura.sealValue or 0
             end
