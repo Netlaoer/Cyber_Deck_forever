@@ -163,8 +163,8 @@ end
 local function CreateGroupMemberAuraContainer(memberIndex, groups, dispelDefs, auraDefs)
     EnsureAuraContainerLoaded()
 
-    local container = CreateFrame("AuraContainer", "CyberDeckGroupAuraSlots_" .. memberIndex, UIParent,
-                                  "CustomAuraContainerTemplate")
+    -- 不传全局名：容器释放后重建时固定名会撞 "already exists"，无名帧没这个问题
+    local container = CreateFrame("AuraContainer", nil, UIParent, "CustomAuraContainerTemplate")
     container:SetPoint("TOPLEFT", UIParent, "TOPLEFT", 0, 0)
     container:SetEnabled(true)
     container:SetFrameStrata(AURA_DURATION_STRATA)
@@ -436,8 +436,8 @@ function CyberDeck:RefreshMouseoverDispelContainer()
 
     if not mouseoverContainer then
         local ok, created = pcall(function()
-            local c = CreateFrame("AuraContainer", "CyberDeckMouseoverDispelSlots",
-                UIParent, "CustomAuraContainerTemplate")
+            -- 不传全局名：释放后重建时固定名会撞 "already exists"
+            local c = CreateFrame("AuraContainer", nil, UIParent, "CustomAuraContainerTemplate")
             c:SetPoint("TOPLEFT", UIParent, "TOPLEFT", 0, 0)
             c:SetEnabled(true)
             c:SetFrameStrata(AURA_DURATION_STRATA)
@@ -527,8 +527,8 @@ function CyberDeck:RefreshTargetJudgeContainer()
     if not targetJudgeContainer then
         EnsureAuraContainerLoaded()
         local ok, created = pcall(function()
-            local c = CreateFrame("AuraContainer", "CyberDeckTargetJudgeSlots",
-                UIParent, "CustomAuraContainerTemplate")
+            -- 不传全局名：释放后重建时固定名会撞 "already exists"
+            local c = CreateFrame("AuraContainer", nil, UIParent, "CustomAuraContainerTemplate")
             c:SetPoint("TOPLEFT", UIParent, "TOPLEFT", 0, 0)
             c:SetEnabled(true)
             c:SetFrameStrata(AURA_DURATION_STRATA)

@@ -596,7 +596,7 @@ D:/DevTools/pyenv-re313/Scripts/python.exe Arasaka/check_dispel.py
 | `test_macro_budget.py` | 宏位预算：`core/macro.lua` 键表 ↔ `gen_class_keymap.py` 键表同序、每职业占用 ≤ 上限、`keymap/*.yml` 逐行同序 | 9 职业 |
 | `test_macro_gen.lua` | 用桩跑真正的 `CreateMacro`：键位顺序、`@raidN` 宏体、静态槽分界、40 号队友不退回 raid1 | 14 项 |
 | `test_paladin_layout.lua` | 圣骑士三系 `num` / 驱散偏移 / 圣印剩余 338 边界（40 人） | 12 项 |
-| `test_group_aura.lua` | 队伍驱散容器：每类型一条 slot、单类型过滤、几何、每轮 Refresh 都重绑、鼠标探针 | 27 项 |
+| `test_group_aura.lua` | 队伍驱散容器：每类型一条 slot、单类型过滤、几何、每轮 Refresh 都重绑、鼠标探针（匿名容器、释放后重建不撞名） | 33 项 |
 | `test_keybinds.lua` | `keybinds.lua`：macro 槽从宏体解析技能名（不把宏序号当法术 ID）、`GetSpellInfo` / `GetMacroInfo` 抛错不中断整轮扫描 | 12 项 |
 | `test_p0_fixes.lua` | 目标施法格（可打断读条/引导写剩余秒数、不可打断写 0）+ 队伍 buff 格由引擎 slot 写、Lua 停写兜底 + 曲线预建 / 初始化顺序 / 特殊资源映射 / gui 不再劫持 OnEnable / `SPELLS_CHANGED` 换 blocks 后重建容器 | 37 项 |
 | `dump_layouts.lua` | 导出 9 职业 × 27 专精的 `start`/`num`/字段/全部像素键（`test_layouts_all.py` 的数据源） | — |
@@ -1453,6 +1453,7 @@ D:/DevTools/pyenv-re313/Scripts/python.exe Arasaka/check_dispel.py
 | `CyberDeck.keybindings` 里宏记录的名字/图标全错 | `GetActionInfo(slot)` 对 `macro` 类型返回的第二值是**宏序号（1~120）**，被直接当法术 ID 传给了 `C_Spell.GetSpellInfo` —— 序号撞上真实 ID 就记成别的法术，查不到就整条丢弃 | 宏要先 `GetMacroInfo` 读宏体、取第一个 `/cast` 后的技能名（跳过 `[group:raid,@raid5]` 这类条件），再 `ResolveSpellID`；这个循环跑在 `C_Timer` 回调里，`GetSpellInfo` 必须 pcall，否则一次抛错整轮扫描中断 |
 | 每帧报 `attempt to perform boolean test on local 'notInterruptible' (a secret boolean value)` | `UnitCastingInfo` / `UnitChannelInfo` 的可打断标记是 **secret boolean**，写了 `if notInterruptible` | secret 值一律不能做条件判断：交给引擎侧 `EvaluateColorFromBoolean(notInterruptible, 不可打断的颜色, 可打断的颜色)` 选颜色，插件侧不分支。`_work/test_secret_safety.py` 会扫这种写法 |
 | 进副本后鼠标划过队友就报 `attempt to compare local 'guid' (a secret string value)` | `UnitGUID("mouseover")` 在 taint 下是 **secret string**，写了 `if guid and guid == lastMouseoverGUID` | secret 时**放弃去重**：`isSecretValue(guid)` 为真就每次鼠标事件都重绑（只多花一点开销），非 secret 才比较与缓存。`note:` 判断「有没有单位」也必须先过 secret 守卫，`if not guid` 同样会抛 |
+| 换专精/学技能后 339/340 恒 0，`/run` 看容器是 nil | AuraContainer 用了**固定全局名**创建，`ReleaseFrame` 只 `SetParent(nil)` 不注销名字 → 释放后再 `CreateFrame(同名)` 撞 `already exists`，被 pcall 吞掉 | 容器一律 `CreateFrame(..., nil, ...)` 匿名创建（引用存在 local/table 里），释放后无名帧可回收、重建不撞名。角色覆盖容器就是这么写的 |
 
 ### 17.7 加完功能的自检顺序
 
