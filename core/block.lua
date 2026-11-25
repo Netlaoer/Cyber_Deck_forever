@@ -1,13 +1,10 @@
 local addon, ns = ...
 
--- 像素总线：与 Shingen Forever 版同款分档编码
---   索引 1..255   -> r=0,        g=序号/255
---   索引 256..510 -> r=1/255,    g=(序号-255)/255
+-- 像素总线：分档编码
+--   索引 1..255   -> r=0,      g=序号/255
+--   索引 256..510 -> r=1/255,  g=(序号-255)/255
 --   索引 511      -> 纯红终止格 (1,0,0)，消费端读到即结束本行扫描
---
--- ★ 从 255 格升到 510 格的原因：队伍块要按 Shingen 的做法「每个可驱类型每人一格」，
---   圣骑士 3 类 x 30 人 = 90 格，加上原有的状态/技能不够放。
---   1..255 的编码完全不变，已有索引和 config.yml 不用动。
+-- 510 格是因为队伍块要「每个可驱类型每人一格」；1..255 编码不变，已有索引与 config.yml 不用动。
 local BLOCK_SCHEME_SPAN = 255
 local BLOCK_CAPACITY = 510
 
@@ -40,10 +37,8 @@ local colorBars = CreateFrame("Frame", "CyberDeckColorBars", UIParent)
 colorBars:SetPoint("TOPLEFT", UIParent, "TOPLEFT", 0, 0)
 colorBars:SetSize(screenWidth, BLOCK_FIX_CONFIG.blockHeight)
 colorBars:SetFrameStrata("TOOLTIP") -- 确保在最上层
--- 层级必须与 Shingen 一致：色条 9001、队伍驱散 AuraContainer 9003（见 core/group_aura.lua）。
--- 之前用 10000/10001 时，引擎建的 AuraButton 落在色条下面，整行读到的是色条自己的 b=0。
+-- 层级与 Shingen 一致：色条 9001、队伍驱散 AuraContainer 9003（见 core/group_aura.lua）
 colorBars:SetFrameLevel(9001)
--- colorBars:Raise()   -- Increases the frame's frame level above all other frames in its strata
 
 -- 存储纹理的数组 (1 到 capacity)
 local pixelTextures = {}
@@ -71,8 +66,7 @@ end
 
 -- 更新或创建静态色块 (按索引)
 function CyberDeck:CreatTexture(i, b)
-    -- 没有对应块（本职业没配、或该专精没有这一格）时直接跳过：
-    -- 之前 nil 会撞上下面的数值比较，抛错打断整个调用方
+    -- 没有对应块（本职业没配/该专精没这一格）时直接跳过；nil 会撞上下面的数值比较抛错
     if type(i) ~= "number" then return end
     -- 终止格不参与数据写入，否则消费端找不到行尾
     if i > BLOCK_FIX_CONFIG.capacity then return end
@@ -101,11 +95,10 @@ end
 DrawBlockEndMarker()
 
 -- ================================================================
--- 施法计数 / 充能条（**预留能力，勿删**）
--- 目前 9 个职业的 ClassBlocks 都没有 countBars 配置，所以这段一次都不会执行；
--- 需要时在 class/*.lua 的 buildBlocks 返回值里加：
+-- 施法计数 / 充能条（预留能力，勿删）
+-- 目前没有职业配 countBars，这段不会执行；需要时在 class/*.lua 的 buildBlocks 里加：
 --   countBars = { [1] = { valueType = "charge", minValue = 0, maxValue = 5, spellId = 123 } }
--- 即可由 main.lua 的 updatePlayerBarInfo() 自动建条（valueType: "castCount" / "charge"）。
+-- 由 main.lua 的 updatePlayerBarInfo() 自动建条（valueType: "castCount" / "charge"）。
 -- ================================================================
 local c = 255
 local BAR_CONFIG = {

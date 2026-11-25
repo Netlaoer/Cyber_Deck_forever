@@ -8,11 +8,8 @@ local addon, ns = ...
     （run_druid_logic），config.yml 的专精段与 keymap/druid.yml 都已配好。
     本文件只负责「块名 -> 索引」与宏表，不承担决策。
 
-    与正式服版的区别：
-    1. 技能用 name 而不是 spellId；main.lua 按名称解析到"已学会的 rank"，
-       没学会的技能自动写 255（不可用）。
-    2. 没有蓄力 / 一键辅助 / 英雄天赋 / 首领战 / 难度这些零售机制。
-    3. 通用块 1~15 与 config.yml 顶层 state 一致；16~17 留空。
+    技能用 name 而非 spellId（main.lua 解析到已学会的 rank，未学会写 255）；
+    无蓄力/一键辅助/英雄天赋/首领战/难度；通用块 1~15 与 config.yml 顶层 state 一致。
 
     索引表：
       1-15    通用（与全局 state 一致）
@@ -23,11 +20,8 @@ local addon, ns = ...
       85    队伍块起点（每人 生命值 / 职责 / 诅咒 / 中毒）
       85+1 起  预留给该职业特有的光环块
 
-    技能名来自 endgametools 的无限服职业法术页（经典 60 级技能组 + 天赋）。
-    改布局时三处必须同步：
-      1. 改下面的索引表
-      2. 改 Arasaka/config.yml 对应专精段的 step
-      3. 重跑 _work/test_layouts_all.py（查 start/num/字段/块尾/区间重叠）
+    改布局时三处必须同步：下面的索引表 / Arasaka/config.yml 对应专精段的 step /
+    重跑 _work/test_layouts_all.py（查 start/num/字段/块尾/区间重叠）。
     决策逻辑在 Arasaka/class/druid_logic.py，不在本文件。
 ]]
 
@@ -137,10 +131,8 @@ CyberDeck.ClassBlocks = {
     [3] = buildBlocks(), -- 守护
 }
 
--- 宏表：dynamicSpells 每个技能占 30 个宏位（@raid1 / @partyN），
--- staticSpells 是单键宏；特殊宏体（以 / 开头）放 specialSpells。
--- 宏位总数上限 = 7 组修饰键 x 39 键 = 273，
--- 动态技能数 x 30 + 静态数 不能超过 273。
+-- 宏表：dynamicSpells 每技能占 30 个宏位（@raid1/@partyN），staticSpells 单键宏，
+-- 以 / 开头放 specialSpells；动态数 x30 + 静态数 ≤ 7 组修饰 x 39 键 = 273。
 CyberDeck.MacrosList = {
     dynamicSpells = { "解除诅咒", "驱毒术" },
     specialSpells = {

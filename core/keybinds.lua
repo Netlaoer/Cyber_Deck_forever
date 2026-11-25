@@ -13,10 +13,8 @@ local function MacroSpellName(body)
 end
 
 --- 动作槽 -> (spellID, 兜底名字)
---- ⚠️ GetActionInfo 的第二个返回值：spell 类型是**法术 ID**，
----    macro 类型是**宏序号**（1~120）。以前直接把它当法术 ID 去查
----    C_Spell.GetSpellInfo，结果要么查到完全无关的法术（序号撞上真实 ID），
----    要么查不到被整条丢弃 —— 动作条上放宏的槽位全部记录错误。
+--- 注意：GetActionInfo 第二返回值对 spell 是法术 ID、对 macro 是宏序号（1~120），
+--- 不能混用，宏要走宏体解析。
 local function ResolveActionSpell(actionType, id)
     if actionType == "spell" then
         return id
@@ -41,8 +39,7 @@ local function ProcessActionSlot(slot)
     local spellID, fallbackName = ResolveActionSpell(actionType, id)
     if not spellID then return end
 
-    -- GetSpellInfo 在未知 ID / 受限上下文里可能抛错；
-    -- 这个函数跑在 C_Timer 回调里，抛一次会打断整轮扫描，所以必须 pcall。
+    -- GetSpellInfo 可能抛错，而这里跑在 C_Timer 回调里，抛一次会打断整轮扫描
     local ok, spellinfo = pcall(C_Spell.GetSpellInfo, spellID)
     if not ok or type(spellinfo) ~= "table" then return end
 
@@ -66,9 +63,6 @@ local function ProcessActionSlot(slot)
                     name = name,
                     actionType = actionType, -- "spell" 直接来自动作槽；"macro" 由宏体解析而来
                 }
-                -- 如果一个动作（如法术）只需要被记录一次，
-                -- 找到绑定后就可以跳出动作条循环 (break)
-                -- break
             end
         end
     end

@@ -3,16 +3,14 @@ local addon, ns = ...
 
 --[[
     class/Paladin.lua — 无限服(1.60.1 / Interface 16001)版
-    ------------------------------------------------------------------
-    与正式服版的区别：
-    1. 技能用 name 而不是 spellId；main.lua 按名称解析到“已学会的 rank”，
-       未学会的技能自动写 255（不可用）。
-    2. 没有神圣能量、圣洁鸣钟、神圣棱镜、美德道标、光环掌握、盲目之光等正式服技能；
-       圣印 / 神恩术 / 圣光灌注 由 core/forever.lua 直接扫描光环写入。
-    3. 三系共用同一套像素索引，只有队伍块长度不同（神圣 7 格 / 防护、惩戒 5 格）。
+
+    技能用 name 而不是 spellId（main.lua 解析到已学会的 rank，未学会写 255）；
+    没有神圣能量/圣洁鸣钟/神圣棱镜/美德道标/光环掌握/盲目之光等正式服技能；
+    圣印 / 神恩术 / 圣光灌注 由 core/forever.lua 扫描光环写入；
+    三系共用同一套像素索引，只有队伍块长度不同（神圣 7 格 / 防护、惩戒 5 格）。
 
     索引表：
-      1-15   通用（与全局 state 一致，11 = 目标生命值）
+      1-15   通用（11 = 目标生命值）
       18-26  圣骑士状态（圣印/施法技能/施法目标/目标距离/自动攻击/神恩术/
              圣光灌注/敌人人数/爆发开关）
       27-36  技能；38-41 状态（大红冷却/延迟/驱散开关/5码敌人）
@@ -22,8 +20,7 @@ local addon, ns = ...
                1 生命值 / 2 职责 / 3 魔法 / 4 疾病 / 5 中毒
                神圣额外 6 圣光守望、7 圣光誓约
              40 人 × 7 格占 58~337（updateGroup 不封顶，按 GetNumGroupMembers 走）
-      338    圣印剩余秒（auras 施放计时 remaining）
-             —— 必须排在队伍块之外
+      338    圣印剩余秒（auras 施放计时 remaining），必须排在队伍块之外
 ]]
 
 local DISPEL_FIELD_BY_TYPE = {
@@ -35,10 +32,8 @@ local DISPEL_FIELD_BY_TYPE = {
 }
 
 local function buildBlocks(dispelTypes, groupAuras)
-    -- 队伍块：每人 num 格（生命值 / 职责 / 各驱散类型 / 光环）
-    -- 驱散格与 Shingen 同款：**每个能驱的类型各占一格**，蓝通道写「同类最长剩余秒数」
-    -- （0 = 没有，1 = 不足一秒，255 = 超过 255 秒或永久）。
-    -- 圣骑士只能驱 魔法/疾病/中毒，所以只建这三格；诅咒/流血不建，省 2 格/人。
+    -- 队伍块：每人 num 格（生命值/职责/各驱散类型/光环），驱散每个类型各占一格，
+    -- 蓝通道 = 同类最长剩余秒数（0 无 / 1 不足一秒 / 255 超 255 秒或永久）
     local group = {
         type = "group",
         healthPercent = 1,
@@ -67,7 +62,6 @@ local function buildBlocks(dispelTypes, groupAuras)
         [8] = { type = "block", name = "引导" },
         [9] = { type = "block", name = "生命值" },
         [10] = { type = "block", name = "能量值" },
-        -- 11 号原来放正式服的「一键辅助」，删掉后空出来给「目标生命值」。
         [11] = { type = "block", name = "目标生命值" },
         [12] = { type = "block", name = "法术失败" },
         [13] = { type = "block", name = "目标类型" },
@@ -110,7 +104,7 @@ local function buildBlocks(dispelTypes, groupAuras)
         [48] = { type = "spell", name = "神圣之盾" },
         [49] = { type = "spell", name = "神恩术" },
 
-        -- 圣印探测：只用来判断“学会没学会”（未学会写 255），不用于冷却
+        -- 圣印探测：只判断是否学会（未学会写 255），不用于冷却
         [50] = { type = "spell", name = "正义圣印" },
         [51] = { type = "spell", name = "命令圣印" },
         [52] = { type = "spell", name = "十字军圣印" },
@@ -120,18 +114,15 @@ local function buildBlocks(dispelTypes, groupAuras)
         [56] = { type = "spell", name = "公正圣印" },
 
 
-        -- 圣印剩余秒：type = "aura" 会被 loadPlayerBlocks 收进 blocks.auras，
-        -- 由 CyberDeck:updateAuraBlocks() 把 Auras["圣印"].remaining 写进来。
-        -- 编号必须排在队伍块之外：40 人 × 7 格占到 337。
+        -- 圣印剩余秒：type=aura 会被收进 blocks.auras，由 updateAuraBlocks 写入 remaining；
+        -- 必须排在队伍块之外（40 人 × 7 格占到 337）
         [338] = { type = "aura", name = "圣印剩余", auraName = "圣印", showKey = "remaining" },
 
-        -- 鼠标可驱：引擎写（绑 mouseover 的 AuraContainer，本职业能驱的几类取剩余最长），
-        -- > 0 = 鼠标指向的人身上有本职业能驱的减益。战斗中同样有效（引擎算，不读光环）。
+        -- 鼠标可驱：引擎写（绑 mouseover，本职业可驱类型取最长剩余），>0 = 有，战斗中有效
         [339] = { type = "block", name = "鼠标可驱" },
 
-        -- 目标智慧审判（debuff 20354）：引擎 AuraContainer 写（绑 target，
-        -- 只认玩家自己挂的这条），0 = 目标身上没有，>=2 = 有（数值是剩余秒数）。
-        -- 防护/神圣用它决定「审判该不该放」，见 Arasaka/class/paladin_logic.py:_judge_gate。
+        -- 目标智慧审判（20354）：引擎写（绑 target，只认自己挂的），0 无 / >=2 剩余秒数；
+        -- 防护/神圣据此决定是否审判（paladin_logic.py:_judge_gate）
         [340] = { type = "block", name = "目标智慧审判" },
 
         [57] = group,
@@ -139,24 +130,19 @@ local function buildBlocks(dispelTypes, groupAuras)
 end
 
 CyberDeck.ClassBlocks = {
-    -- 驱散格：只列本职业真能驱的类型（圣骑士 = 清洁术 4987：魔法/疾病/中毒）。
-    -- 神圣多两个 buff 位：6 = 圣光守望(1310909)、7 = 圣光誓约(1328548)
+    -- 驱散格只列真能驱的类型；神圣多两个 buff 位：6 圣光守望(1310909) / 7 圣光誓约(1328548)
     [1] = buildBlocks({ "Magic", "Disease", "Poison" },
         { [6] = { 1310909 }, [7] = { 1328548 } }),
     [2] = buildBlocks({ "Magic", "Disease", "Poison" }), -- 防护
     [3] = buildBlocks({ "Magic", "Disease", "Poison" }), -- 惩戒
 }
 
--- 创建圣骑士宏
--- dynamicSpells：按队伍位施放的技能，每个技能占 30 个宏位（@raid1 / @partyN）
--- staticSpells：单键宏，[@mouseover] 前缀表示鼠标指向施放；以 / 开头的值按完整宏体处理
--- 注意：宏位总数 = 7 组修饰键 x 39 键 = 273，动态技能数 x 30 + 静态数 不能超过 273
+-- 宏表：dynamicSpells 每技能占 30 个宏位（@raid1/@partyN）；staticSpells 单键宏
+-- （[@mouseover] 前缀 = 指向施放，以 / 开头 = 完整宏体）；动态 x30 + 静态 ≤ 273
 CyberDeck.MacrosList = {
-    -- 圣光誓约必须能挂队友，只能走动态宏（@raidN）。这会把动态位从 150 涨到 180，
-    -- 静态技能整体后移 30 格，动作条需要重摆一次。
+    -- 圣光誓约必须能挂队友，只能走动态宏；动态位 150 -> 180，静态技能整体后移 30 格
     dynamicSpells = { "圣光术", "圣光闪现", "神圣震击", "清洁术", "圣疗术", "圣光誓约", "圣光守望" },
-    -- specialSpells 里是**完整宏体**（不拼 /cast），与 staticSpells 同位置时优先。
-    -- /startattack 不占 GCD，[harm,nodead] 保证对无效目标不产生红字报错。
+    -- specialSpells 是完整宏体（不拼 /cast），与 staticSpells 同槽位时优先
     specialSpells = {
         -- special 与 static 同槽位时 special 优先
         [33] = "/startattack [harm,nodead]",
@@ -196,8 +182,7 @@ CyberDeck.MacrosList = {
         [32] = "力量祝福",
         -- 防护的"鼠标指向驱散"（关闭 /cy dispel 时使用）
         [34] = "[@mouseover]清洁术",
-        -- 惩戒自疗：固定打给自己。动态宏（unit N）在团队里会指向 raidN，
-        -- 自疗必须走 unit 0 的 [@player]，否则会去治 raid1
+        -- 惩戒自疗必须用 [@player]：动态宏在团队里会指向 raidN
         [35] = "[@player]圣光闪现",
     },
 }

@@ -1,23 +1,14 @@
 local addon, ns = ...
 --[[
     core/forever.lua — 无限服(wowf, Interface 16001)适配层
-    ------------------------------------------------------------------
-    无限服与正式服的差异（已核实）：
-    1. 客户端版本 1.60.1，TOC 版本号 16001；
-    2. 技能是 60 级经典技能组，带 rank（同一技能多个 ID），正式服的技能 ID 大多不存在；
-    3. 每个职业只有一个伪专精（圣骑士 1486），实际天赋树决定定位，
-       所以专精索引要按“天赋树投入点数最多的一系”算，不能用 GetSpecialization()；
-    4. 没有英雄天赋、没有一键辅助；
-    5. 药水/物品 ID 是经典旧世的，不是正式服 2413xx。
+    差异：60 级经典技能组带 rank（正式服 ID 大多不存在）；无专精系统，按天赋树判定；
+          无英雄天赋 / 一键辅助；药水物品 ID 是经典旧世的。
 
-    本文件提供（全部为无限服专用逻辑）：
-    - CyberDeck.isForever  仅用于 /cy spec 调试输出，逻辑分支不再依赖它
-    - F:ResolveSpellID(name)        名称 -> 已学会的 rank ID（扫法术书）
-    - F:RebuildSpellBookIndex()     重建 名称->ID 索引
-    - F:GetActiveSpecIndex()        按天赋树算专精索引 1..3
-    - F:GetForeverSpecInfo(index)   专精 ID/名称/职责/射程
-    - F:UpdateForeverAuras()        圣印/神恩术/圣光灌注 像素
-    - F.itemGroups                  药水物品 ID 分组（两套客户端各一份）
+    提供：
+    - F:ResolveSpellID(name)        名称 -> 已学会的 rank ID
+    - F:GetActiveSpecIndex()        按天赋树算专精 1..3
+    - F:UpdateForeverAuras()        圣印/神恩术/圣光灌注/正义之怒 像素
+    - F.itemGroups                  药水物品 ID 分组
 ]]
 
 local F = CyberDeck
@@ -49,8 +40,7 @@ end
 --                      名称 -> 法术ID
 -- ================================================================
 local spellNameToID = {}
--- 离线训练师表里的“名字 -> 最早能学到的 rank”。不管学没学会都记一份，
--- 用来区分“没学会”和“客户端根本没这个技能名”（天赋技能不在训练师表里，会落到后者）。
+-- 训练师表里的“名字 -> 最早能学到的 rank”，用来区分“没学会”和“表里没这个技能名”
 local trainerSpellNames = {}
 local spellBookBuilt = false
 
@@ -75,8 +65,7 @@ local function spellIDFromSlot(slot, bank)
     return nil
 end
 
--- 用 ForeverDB 离线表（core/forever_data.lua）建“中文名 -> 已学会的最高 rank”
--- 表里只有 {学习等级, spellID} 事实数据；中文名由客户端 GetSpellInfo 提供，自动跟随语言
+-- 用离线表建“名称 -> 已学会的最高 rank”；名称由客户端提供，自动跟随语言
 function F:BuildSpellIndexFromData()
     local all = CyberDeck.ForeverSpellData
     local classKey = self.state and self.state.classFilename
@@ -155,8 +144,7 @@ function F:RebuildSpellBookIndex()
         end
     end
 
-    -- 离线表覆盖：同名取“已学会的最高 rank”，比法术书遍历更准；
-    -- 法术书先跑的好处是天赋技能（不在训练师表里）仍能进索引
+-- 离线表覆盖同名最高 rank，比法术书更准；天赋技能仍靠上面的法术书索引
     self.dataSpellCount = self:BuildSpellIndexFromData()
 
     spellBookBuilt = true
@@ -188,9 +176,8 @@ function F:InvalidateSpellBookIndex()
     wipe(spellNameToID)
 end
 
--- 技能名状态：已学会 / 没学会（但训练师表里有）/ 表里也没有
--- 天赋技能（如 神圣震击、忏悔）不在训练师表里，探测不到时落到第三种，
--- 不能直接判定成“这个号没学这个技能”——有可能是天赋没点，也有可能是名字对不上。
+-- 技能名状态：已学会 / 未学会(训练师表有) / 表里也没有
+-- 天赋技能不在训练师表里，落第三种时不能当成“没学”
 function F:GetSpellNameStatus(name)
     local learned = self:ResolveSpellID(name)
     if learned then
@@ -213,8 +200,7 @@ F.foreverSpecs = {
         [2] = { id = 100022, name = "防护", role = "TANK", range = 10 },
         [3] = { id = 100023, name = "惩戒", role = "DAMAGER", range = 10 },
     },
-    -- 以下 8 个职业是骨架阶段（像素块已配好，决策层未实现）。
-    -- 专精名/职责/射程取经典 60 级的标准值，接决策层时用 /cy spec 实机核对。
+    -- 以下 8 个职业为骨架阶段（决策层未实现），取经典 60 级标准值
     ["WARRIOR"] = {
         [1] = { id = 100001, name = "武器", role = "DAMAGER", range = 5 },
         [2] = { id = 100002, name = "狂怒", role = "DAMAGER", range = 5 },
@@ -257,8 +243,7 @@ F.foreverSpecs = {
     },
 }
 
--- 树名 -> 专精索引。无限服的 treeIDs 顺序不等于 1/2/3 系
--- （实测防护树排在第一位，会把防护 22 点算到神圣头上），必须按树名归类。
+-- 树名 -> 专精索引：无限服 treeIDs 顺序不等于 1/2/3 系，必须按树名归类
 local specTreeKeys = {
     { index = 1, keys = { "神圣", "HOLY" } },
     { index = 2, keys = { "防护", "PROTECT" } },
@@ -301,8 +286,7 @@ end
 
 local specCache = { index = 1 }
 
--- 专精探测节点：数据来自 ForeverDB Talents.lua（build 1.60.1.70862）
--- 这三个天赋各系独有、都要 10 点前置，同一套天赋不可能同时点亮，所以互斥且确定
+-- 专精探测节点（ForeverDB Talents）：三系各一个 10 点前置天赋，互斥
 local SPEC_PROBE_NODES = {
     { index = 1, node = 105325, name = "Divine Favor" },      -- 神圣
     { index = 2, node = 105625, name = "Templar's Bulwark" }, -- 防护
@@ -402,12 +386,8 @@ function F:GetActiveSpecIndex()
         source = "经典天赋树"
     end
 
-    -- 3) 专精专属技能（无限服实测数据）：
-    --    神圣之盾 = Holy Shield 20927，防护 训练师技能 Lv40
-    --    神圣震击 = Holy Shock 1311606，神圣 天赋 Lv30（要点了天赋才进法术书）
-    --    忏悔     = Repentance 9623，惩戒 天赋
-    --    三者各锁一系（互斥来自"专精锁"，不是正式服那种点数上限互斥），查到就能直接定专精；
-    --    查不到只说明这一系的招牌技能没学/没点，不能当成"不是这一系"。
+    -- 3) 专精专属技能（各锁一系；查不到只说明没学/没点，不能反证不是这一系）：
+    --    神圣之盾 20927 = 防护(训练师 Lv40)；神圣震击 1311606 = 神圣(天赋 Lv30)；忏悔 9623 = 惩戒(天赋)
     local probe = {}
     local probeStatus = {}
     for _, probeName in ipairs({ "神圣之盾", "神圣震击", "忏悔" }) do
@@ -437,9 +417,8 @@ function F:GetActiveSpecIndex()
         source = "treeIDs 顺序"
     end
 
-    -- 无限服 C_Traits.GetConfigInfo 只返回 1 棵树（实测 id=1100），byOrder 会把全部点数堆在
-    -- 第 1 位，显示成“22 0 0”会误以为点在神圣。有 traitNode 判定、又读不到经典三系点数时，
-    -- 把总点数归到判定出的那一系，显示才和游戏内一致。
+    -- 无限服只返回 1 棵树，byOrder 会把点数全堆在第 1 位；有 traitNode 判定、
+    -- 又读不到经典三系点数时，把总点数归到判定出的那一系
     if probeIndex and not points then
         local total = 0
         for i = 1, 3 do
@@ -511,24 +490,20 @@ local function remainingSeconds(aura)
     return left
 end
 
--- 常驻 buff 的“最后看到时间”：战斗中 buff 名偶尔读不到时不要立刻判成没有，
--- 否则决策层会每个节流周期重补一次，光环看起来一开一关
+-- 常驻 buff 的最后看到时间：战斗中名字偶尔读不到时不要立刻判成没有（否则一开一关）
 local lastSeenAt = {}
 local spellIDByName = {}
 local SEEN_GRACE = 1.5   -- 只兜住单帧读不到；再长就会让“buff 已经掉了”迟迟不回落
 
--- 施放成功后的“保底有效期”：战斗中 buff 名可能整个读不到，
--- 有了这个就不会把已经开好的光环/正义之怒当成没开，从而反复重开（一开一关）
+-- 施放成功后的保底有效期：战斗中读不到名字时用，避免把已开的光环当成没开反复重开
 local AURA_LOCK_SECONDS = {
     ["正义之怒"] = 1700,   -- 30 分钟 buff，留 100 秒余量
 }
 local auraLockUntil = {}
 local auraSpellName = {}
 
--- 圣印持续 30 秒，锁 28 秒：战斗中读不到时靠它防刷屏，留 2 秒余量照常补
--- 圣印计时统一交给 core/auras.lua 的 CyberDeck.Auras["圣印"]：
--- 施放成功时由 MarkForeverAuraCast 写入 expirationTime + sealValue，
--- updateAura() 每帧算 remaining，到期自动清空。这里不再自己维护锁。
+-- 圣印计时交给 core/auras.lua 的 Auras["圣印"]：MarkForeverAuraCast 写入，
+-- updateAura() 每帧算 remaining，这里不再维护锁
 
 function F:MarkForeverAuraCast(spellID)
     if type(spellID) ~= "number" then return end
@@ -584,9 +559,7 @@ function F:UpdateForeverAuras()
     local function stillThere(name)
         if buffs[name] then
             lastSeenAt[name] = now
-            -- 这里**不能**续 auraLockUntil：如果每 0.2 秒都续满一次，buff 真正到期时
-            -- 锁还剩整整一个周期，像素会继续显示“有”，决策层就一直不补。
-            -- 兜底只依赖 MarkForeverAuraCast 设的一次性锁 + 下面的 1.5 秒 grace。
+-- 不能续 auraLockUntil：每帧续满会让 buff 真到期时锁还剩一整个周期，像素继续显示“有”
             return true
         end
         -- 战斗中 buff 读不到时，用“最近施放成功”的保底有效期兜住
@@ -622,9 +595,8 @@ function F:UpdateForeverAuras()
                 break
             end
         end
-        -- 战斗中 buff 名可能整段读不到（secret），按 spellID 复查一次。
-        -- 不靠时间猜：进战斗瞬间若判成“没挂圣印”，决策层会立刻重放一次，
-        -- 表现为“每次进战斗都重新上一次圣印”。
+        -- 战斗中名字可能整段读不到（secret），按 spellID 复查；
+        -- 不靠时间猜，否则进战斗瞬间会被判成没挂圣印、立刻重放一次
         if value == 0 and C_UnitAuras.GetPlayerAuraBySpellID then
             for _, seal in ipairs(SEAL_ORDER) do
                 local id = spellIDByName[seal.name]
@@ -642,9 +614,7 @@ function F:UpdateForeverAuras()
             end
         end
 
-        -- 圣印剩余（338 号格）的数据源：本地计时为主，真实 buff 能读到时用它校正。
-        --   · 脱战可读 buff.expirationTime -> 直接对齐（被驱散/被顶掉立刻反映）
-        --   · 战斗中读不到是常态 -> 继续信施放成功记的 30 秒（MarkForeverAuraCast），到期由 updateAura() 归零
+        -- 圣印剩余（338 格）：本地计时为主，脱战读到真实 expirationTime 时用它校正
         local sealAura = CyberDeck.Auras and CyberDeck.Auras["圣印"]
         if sealAura and not UnitAffectingCombat("player") then
             local realExp = sealAuraFound and sealAuraFound.expirationTime
@@ -659,9 +629,7 @@ function F:UpdateForeverAuras()
             end
         end
 
-        -- 战斗中 buff 名/spellID 都读不到（secret），用 auras 的施放计时推算：
-        -- 施放成功记 30 秒，到期由 updateAura() 自动清空，归 0 让决策层补。
-        -- 战斗外读不到就是真到期了，直接归 0，不查计时（避免被驱散时误判）。
+        -- 战斗中都读不到时用施放计时的 sealValue 兜住；脱战读不到就是真到期
         if value == 0 and UnitAffectingCombat("player") then
             if sealAura and sealAura.expirationTime and now < sealAura.expirationTime then
                 value = sealAura.sealValue or 0
@@ -693,14 +661,9 @@ end
 -- ================================================================
 --                       自动攻击状态（近战平砍）
 -- ================================================================
--- 无限服没有 START_AUTO_ATTACK / STOP_AUTO_ATTACK 事件，只有经典的两个：
---   PLAYER_ENTER_COMBAT  开始近战攻击
---   PLAYER_LEAVE_COMBAT  停止
--- EllesmereUIActionBars / SwingTimer 也是用这两个维护 meleeOn，可作参照。
--- 远程自动射击是 START_AUTOREPEAT_SPELL / STOP_AUTOREPEAT_SPELL，与近战无关。
---
--- 注意：/reload 时如果正在砍怪，事件不会补发，需要重新攻击一次才识别得到；
--- 死亡或脱战会复位（死亡自动停止攻击）。
+-- 无限服没有 START_AUTO_ATTACK / STOP_AUTO_ATTACK，只有 PLAYER_ENTER_COMBAT /
+-- PLAYER_LEAVE_COMBAT；远程自动射击走 START_AUTOREPEAT_SPELL，与近战无关。
+-- /reload 时正在砍怪不会补发事件，需重新攻击一次才识别得到。
 F.autoAttackOn = false
 
 function F:PLAYER_ENTER_COMBAT()
@@ -764,8 +727,7 @@ function F:PrintSpecDebug()
     table.sort(buffNames)
     print("玩家增益:", table.concat(buffNames, ", "))
 
-    -- 圣印计时状态：验证"战斗中施放能不能记上 30 秒"。
-    -- expirationTime 是数字 = 记上了；nil = 没记上（spellID 被保护 / 名字没解析出来）。
+    -- 圣印计时状态：expirationTime 是数字 = 记上了，nil = 没记上
     local sa = CyberDeck.Auras and CyberDeck.Auras["圣印"]
     if sa then
         print(("圣印计时: 编号=%s 到期=%s 剩余=%.1fs 战斗中=%s"):format(
@@ -812,16 +774,9 @@ end
 -- ================================================================
 -- C_UnitAuras.GetUnitAuraInstanceIDs 在无限服上若不存在，退回逐条扫描
 function F:GetAuraInstanceIDs(unit, filter, maxCount, sortRule)
-    -- ⚠️ 客户端签名：GetUnitAuraInstanceIDs(unit, filter [, maxCount, sortRule, sortDirection])
-    -- 第 4 个参数是 **sortRule（枚举）**，不是 includeNameplateIndex ——
-    -- 传错会报 "bad argument #4 to '?'"。
-    -- 这里只传前三个（maxCount），sortRule 用客户端默认值。
-    --
-    -- ⚠️ 受限（战斗中）时两条路都会抛
-    --   "Auras cannot be accessed when secret while tainted by '<addon>'"
-    -- 这时返回 **nil**（不是空表）—— 区分「读不到」和「确实没有减益」：
-    --   空表 = 真的没有减益 -> 可以安全地不驱散
-    --   nil  = 读不到（可能受限）-> 目标侧退回基线，不写入
+    -- 签名：GetUnitAuraInstanceIDs(unit, filter [, maxCount, sortRule, sortDirection])，
+    -- 第 4 个参数是 sortRule 枚举，不是 includeNameplateIndex，传错会报 bad argument #4。
+    -- 受限时返回 nil（读不到），空表才是「确实没有减益」——两者必须区分。
     if C_UnitAuras.GetUnitAuraInstanceIDs then
         local ok, ids
         if sortRule ~= nil then
@@ -850,13 +805,8 @@ function F:GetAuraInstanceIDs(unit, filter, maxCount, sortRule)
     return ids
 end
 
--- ★ 这个客户端的签名和零售不一样：
---   零售   : C_UnitAuras.GetAuraDispelTypeColor(unit, auraInstanceID, curve)
---   无限服 : C_UnitAuras.GetAuraDispelTypeColor(auraInstanceID, curve)   ← 只有 2 个参数
---   实测（2026-11-22）：按零售的 3 参数传会报
---   "bad argument #3 to '?' (Usage: ...GetAuraDispelTypeColor(auraInstance, curve))"
---   -> 颜色一直拿不到，「目标类型」像素永远退回基线（队友驱散格已不走这里）。
---   两种签名都试一遍，兼容不同客户端。
+-- 签名与零售不同：零售 (unit, auraInstanceID, curve)，无限服 (auraInstanceID, curve)。
+-- 按零售传会报 bad argument #3，颜色拿不到 -> 「目标类型」永远退回基线。两种都试。
 function F:GetAuraDispelTypeColor(unit, auraInstanceID, curve)
     if not C_UnitAuras.GetAuraDispelTypeColor then return nil end
     local ok, color = pcall(C_UnitAuras.GetAuraDispelTypeColor, auraInstanceID, curve)

@@ -128,7 +128,7 @@
 > 每个能驱的类型各占一格（圣骑士：魔法 / 疾病 / 中毒），蓝通道 = 该类型最长剩余秒数。
 > 颜色由 `AuraContainer` 的**原生计时文字**驱动（`button:SetDurationText` +
 > `RemainingDuration` 曲线），插件侧不读光环 —— 所以脱战/战斗同一套，没有 secret 问题。
-> 神圣的 6/7（圣光守望 / 圣光誓约）走同一条引擎通道：`groups.auras` → `includeSpellIDs` slot，
+> 神圣的 6/7（圣光守望 / 圣光誓约）走同一条引擎通道：`groups.auras` → `includeSpellIDs` slot（过滤 `HELPFUL|PLAYER`，**只认自己施放的**），
 > 容器建好后 Lua 的 `OnUpdateUnitAura` 自动停写（`groupAuraBuffEngineReady`），避免战斗中写 0 覆盖。
 >
 > 三条硬约束：每个类型一条 slot 且 `includeDispelTypes` 只放这一个类型；

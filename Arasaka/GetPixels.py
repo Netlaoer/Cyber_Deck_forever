@@ -68,10 +68,8 @@ def _is_rgb_gray_end_marker(b, g, r):
 
 
 # 队伍可施法人数上限（与 core/macro.lua 的 GROUP_TARGET_LIMIT 一致）：
-#   键位总数 = 7 种修饰 × 46 键 = 322
-#   圣骑士 7 个动态技能 × 40 人 = 280 + 静态/特殊 34 = 314 <= 322  -> 覆盖 40 人
-#   （Shingen 用 26 组左右修饰 × 44 键 = 1143 位；我们只加主键，不动修饰键）
-#   config 的 group.units 可覆盖（1~40），超 40 会被夹住。
+#   7 组修饰 × 46 键 = 322 位；圣骑士 7×40 + 34 = 314，够 40 人
+#   config 的 group.units 可覆盖（1~40），超 40 会被夹住
 DEFAULT_GROUP_UNITS = 40
 
 TOP_ROW_CAPACITY = 510          # 数据格数（与 core/block.lua 的 BLOCK_CAPACITY 一致）
@@ -420,9 +418,8 @@ def build_state_dict(config, row_data, state_config, class_id=None, spec_id=None
                 spells_sub[spell_key] = int(raw) if raw is not None else 0
         result["spells"] = spells_sub
 
-    # group 子字典：从 start 开始，每隔 num 个 step 为一个成员
-    # Lua: index = unit_start + obj.index * unit_num + field_offset (1~5)
-    # Python: base_step=start+(i-1)*num, row_key=base_step+(rel_step-1) 对应 Lua 的 index
+    # group 子字典：从 start 起每 num 个 step 一个成员
+    # base_step=start+(i-1)*num, row_key=base_step+(rel_step-1) 对应 Lua 的 index
     group_config = (state_config or {}).get("group")
     if group_config and isinstance(group_config, dict):
         start = group_config.get("start", 26)

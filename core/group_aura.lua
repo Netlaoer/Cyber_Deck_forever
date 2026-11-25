@@ -1,20 +1,14 @@
 local addon, ns = ...
 
 --[[============================================================================
-    队伍成员驱散像素 —— 严格照搬 Shingen Forever 版 core/block.lua:1140-1470
+    队伍成员驱散像素 —— 照搬 Shingen Forever 版 core/block.lua:1140-1470
+    命名差异：Shingen -> CyberDeck，shingenUnit -> cdUnit，
+              shingenDispelDurationSlots -> cdDispelSlots
 
-    与 Shingen 的差异只有命名：
-      Shingen            -> CyberDeck
-      shingenUnit        -> cdUnit
-      shingenDispelDurationSlots -> cdDispelSlots
-
-    行为完全一致：
-      · 每个可驱类型一条 slot，candidateFilters.includeDispelTypes 只放该类型
-      · sortMethod = ExpirationOnly / sortDirection = Reverse（同类取剩余最长）
-      · initializeFrame：按钮锚 UIParent 那一格 + SetClipsChildren + 底色 b=1 + █ 计时文字
-      · 每次 RefreshGroupAuraContainers 都 SetUnit -> 重绑候选过滤 -> UpdateAllAuras
-        （SetUnit 会冲掉过滤；只在换单位时绑一次会永久失效）
-      · 容器常驻复用，只 SetEnabled/Show/Hide，不 Destroy
+    行为：每个可驱类型一条 slot（候选过滤只放该类型，取剩余最长）；
+          按钮锚 UIParent 那一格 + SetClipsChildren + █ 计时文字；
+          SetUnit 会冲掉候选过滤，每次 Refresh 都要重设再 UpdateAllAuras；
+          容器常驻复用，只 SetEnabled/Show/Hide，不 Destroy。
 ============================================================================]]
 
 local AURA_DURATION_CHAR = "█"
@@ -24,8 +18,7 @@ local AURA_DURATION_LEVEL = 9003
 
 local BLOCK = CyberDeck.BLOCK_FIX_CONFIG
 if not BLOCK then
-    -- 不能让整个文件崩掉：崩了 RefreshGroupAuraContainers 就不存在，
-    -- main.lua 的 `if self.RefreshGroupAuraContainers then` 会静默跳过 -> 0 个容器且无报错。
+    -- 不能让整个文件崩掉：崩了 RefreshGroupAuraContainers 就不存在，main.lua 会静默跳过
     CyberDeck.groupAuraLoadError = "CyberDeck.BLOCK_FIX_CONFIG 缺失（core/block.lua 没加载？）"
     return
 end
@@ -33,8 +26,7 @@ end
 local AURA_BLOCK_W = BLOCK.blockWidth
 local AURA_BLOCK_H = BLOCK.blockHeight
 
--- 驱散字段 -> 引擎的 dispelType 名（Magic/Curse/Disease/Poison/Bleed）
--- 顺序与 Shingen DISPEL_DURATION_FIELDS 一致
+-- 驱散字段 -> 引擎的 dispelType 名
 local DISPEL_DURATION_FIELDS = {
     { field = "dispelMagic", auraType = "Magic" },
     { field = "dispelCurse", auraType = "Curse" },
@@ -133,8 +125,7 @@ local function CollectGroupDispelDefs(groups)
     return defs
 end
 
---- 队伍 buff 格：groups.auras[偏移] = { spellID, ... }
--- 和驱散一样交给引擎计时（战斗中 Lua 读光环是 secret，会写 0 覆盖引擎值）。
+--- 队伍 buff 格：groups.auras[偏移] = { spellID, ... }，同样交给引擎计时
 local function CollectGroupAuraDefs(groups)
     local defs = {}
     for offset, ids in pairs(groups.auras or {}) do
@@ -190,14 +181,13 @@ local function CreateGroupMemberAuraContainer(memberIndex, groups, dispelDefs, a
     end
 
     -- 队伍 buff 格：同一套计时文字（b = 剩余秒数），永久 buff 露出底色 b=1。
-    -- 过滤只按 spellID、不限来源：圣光守望/圣光誓约可能是别的圣骑士上的，
-    -- 按 PLAYER 过滤会判成「没有」-> 每轮重复补。
+    -- 过滤 HELPFUL|PLAYER：圣光守望/誓约只认自己施放的（收益归施法者）
     container.cdBuffSlots = {}
     for _, def in ipairs(auraDefs) do
         local pixelIndex = GroupAuraPixelIndex(groups, memberIndex, def.offset)
         if pixelIndex > 0 and pixelIndex <= BLOCK.capacity then
             local key = "group_" .. memberIndex .. "_aura_" .. def.offset
-            container:AddAuraSlot(key, "HELPFUL", {
+            container:AddAuraSlot(key, "HELPFUL|PLAYER", {
                 candidateFilters = { includeSpellIDs = def.includeSpellIDs },
                 sortMethod = AuraContainerSortMethod.ExpirationOnly,
                 sortDirection = AuraContainerSortDirection.Reverse,
@@ -224,8 +214,7 @@ local function KickAuraContainer(container, unit)
     end
 end
 
--- 重绑全部槽（驱散 + buff）的候选过滤，并强制容器重新分配光环
--- 顺序：SetUnit → SetAuraSlotCandidateFilters → UpdateAllAuras（避免 SetUnit 冲掉过滤）
+-- 重绑全部槽的候选过滤：SetUnit -> SetAuraSlotCandidateFilters -> UpdateAllAuras
 local function RebindContainerFilters(container, unit)
     if not container then
         return
@@ -298,8 +287,7 @@ function CyberDeck:RefreshGroupAuraContainers()
             usedContainers[memberIndex] = true
             local container = groupAuraContainers[memberIndex]
             if not container then
-                -- 战斗中/引擎未就绪时 CreateFrame/AddAuraSlot 可能抛错，
-                -- 不能让它冒泡到 updateGroup（后面的逻辑会被整段跳过）。
+                -- 战斗中/引擎未就绪时可能抛错，不能让它冒泡到 updateGroup
                 local ok, created = pcall(CreateGroupMemberAuraContainer, memberIndex, groups, dispelDefs, auraDefs)
                 if ok and created then
                     container = created
@@ -331,8 +319,7 @@ function CyberDeck:RefreshGroupAuraContainers()
         end
     end
 
-    -- 引擎已接管队伍 buff 格：main.lua 的 Lua 读光环路径必须停写，
-    -- 否则战斗中读不到会写 0，把引擎写的剩余秒数盖掉。
+    -- 引擎已接管队伍 buff 格：Lua 读光环路径必须停写，否则战斗中会写 0 盖掉引擎值
     self.groupAuraBuffEngineReady = (#auraDefs > 0 and next(groupAuraContainers) ~= nil) or nil
 end
 
@@ -354,22 +341,15 @@ function CyberDeck:GetGroupAuraContainer(memberIndex)
 end
 
 -- ================================================================
--- 鼠标指向驱散探针：给 mouseover 建一条引擎容器，
--- 一条 slot 过滤「本职业所有能驱的类型」，引擎取其中剩余最长的写进
--- 「鼠标可驱」格（> 0 = 鼠标指向的人身上有可驱减益）。
---
--- 与队友容器同源（都走 AuraContainer 引擎，引擎自己算剩余秒数），
--- 所以**战斗中同样有效**（不读光环，不受 secret 限制）。
---
--- 关键点：只在 UnitGUID("mouseover") 变化时重绑 SetUnit；
--- 同一单位身上的减益变化由引擎自己刷新，不需要每帧重绑
--- （每帧 SetUnit + UpdateAllAuras 会拖慢主循环，之前踩过这个坑）。
+-- 鼠标指向驱散探针：给 mouseover 建一条引擎容器，一条 slot 过滤本职业所有可驱类型，
+-- 引擎取剩余最长的写进「鼠标可驱」格（> 0 = 有可驱减益）。
+-- 与队友容器同源，战斗中同样有效（不读光环）。
+-- 只在 UnitGUID("mouseover") 变化时重绑；每帧 SetUnit + UpdateAllAuras 会拖慢主循环。
 -- ================================================================
 local mouseoverContainer = nil
 local lastMouseoverGUID = nil
 
---- secret 值不能做条件判断、也不能比较（本服 UnitGUID 在 taint 下就是 secret string）。
---- 返回 true 表示「读得到但不能用」，调用方要按「拿不到可用信息」处理。
+--- secret 值不能做条件判断、也不能比较；返回 true 表示「读得到但不能用」。
 local function isSecretValue(v)
     return type(issecretvalue) == "function" and issecretvalue(v) or false
 end
@@ -402,10 +382,8 @@ function CyberDeck:RefreshMouseoverDispelContainer()
         return
     end
 
-    -- 只在鼠标指向的单位变化时重绑（同一单位由引擎自己跟）
-    -- ⚠️ UnitGUID 在本服是 **secret string**：不能写 `guid and ...`，也不能 `guid == ...`
-    -- （2026-11-24 副本内报错：attempt to compare local 'guid' (a secret string value)）。
-    -- secret 时放弃去重，每次事件都重绑一遍 —— 只多一点开销，绝不会崩。
+    -- 只在鼠标指向的单位变化时重绑；UnitGUID 在本服是 secret string，不能比较、
+    -- 不能做布尔判断 —— secret 时放弃去重，每次事件都重绑（只多一点开销）。
     local guid = UnitGUID("mouseover")
     if isSecretValue(guid) then
         lastMouseoverGUID = nil
@@ -423,8 +401,7 @@ function CyberDeck:RefreshMouseoverDispelContainer()
         end
     end
 
-    -- ★ 只驱散友方：鼠标指向敌对/中立单位时，敌方身上的减益会被 HARMFUL 过滤
-    --   当成「可驱减益」，导致对着敌人也按清洁术。这里 Hide 容器，让 339 露出 0。
+    -- 只驱散友方：敌对单位身上的减益也会被 HARMFUL 过滤命中，Hide 容器让 339 露出 0
     if not UnitCanAssist("player", "mouseover") then
         if mouseoverContainer then
             mouseoverContainer:Hide()
@@ -475,11 +452,8 @@ function CyberDeck:GetMouseoverDispelContainer()
     return mouseoverContainer
 end
 
---- 只刷新鼠标探针容器当前绑定的光环（不重绑 SetUnit）：
---   mouseover 单位身上的减益被驱掉后，UNIT_AURA 会触发，这里立即 UpdateAllAuras
---   让引擎重新评估按钮显示，把「已驱减益」的按钮隐藏 -> 「鼠标可驱」格及时清零。
---   不刷新的话引擎可能滞后几帧，残留旧值 > 0，决策层就会重复驱散。
---   只在容器可见（鼠标正指着一个友方）时刷新，Hide 状态（鼠标已移开）跳过。
+--- 只刷新鼠标探针当前绑定的光环（不重绑 SetUnit）：减益被驱掉后引擎可能滞后几帧，
+--- 残留旧值 > 0 会让决策层重复驱散。容器 Hide 时（鼠标已移开）跳过。
 function CyberDeck:RefreshMouseoverDispelAuras()
     if mouseoverContainer and mouseoverContainer.cdUnit == "mouseover"
         and mouseoverContainer:IsShown() then
@@ -490,17 +464,9 @@ function CyberDeck:RefreshMouseoverDispelAuras()
 end
 
 -- ================================================================
--- 目标审判 debuff 探针：给 target 建一条引擎容器，
--- 一条 slot 只认玩家自己挂的「智慧审判」(20354)，
--- 引擎把剩余秒数写进「目标智慧审判」格：
---   0     = 目标身上没有（按钮隐藏，露出色条底色）
---   1     = 有，但不足 1 秒
---   2..254 = 剩余秒数
---   255   = 永久/超过 255 秒
---
--- 与队友/鼠标探针同源：引擎自己算剩余时间，插件侧不读光环，
--- 所以战斗中（auraSecret=true）同样有效。
--- 只在目标变化 / 过场 / 进出战斗时重绑 SetUnit，不每帧刷。
+-- 目标审判 debuff 探针：给 target 建一条引擎容器，只认玩家自己挂的智慧审判(20354)，
+-- 剩余秒数写进「目标智慧审判」格：0 = 没有，1 = 不足 1 秒，2..254 = 剩余秒数，255 = 永久。
+-- 与队友/鼠标探针同源，战斗中同样有效；只在目标变化/过场/进出战斗时重绑。
 -- ================================================================
 local TARGET_JUDGE_SPELL = 20354
 local targetJudgeContainer = nil
@@ -580,15 +546,9 @@ end
 
 -- ================================================================
 -- 救赎之魂（27827）职责覆盖
---
--- 作用：该队员身上有 27827 时，在他的「职责」格上盖一张 b=0 的整格纹理。
--- 消费端（utils.py 的 _role_not_zero）读到职责 0 -> 整个跳过这个人，
--- 不加血、不驱散、不补 buff。光环消失按钮隐藏，露出下面正常的职责像素。
---
--- ★ 只能用 HELPFUL 裸过滤，不能加 PLAYER：
---   救赎之魂可能是别的牧师给的，限制 PLAYER 就只认自己上的。
--- ★ 覆盖容器要比队伍容器高一层（AURA_DURATION_LEVEL + 1），
---   否则会被正常的职责像素盖住。
+-- 队员身上有 27827 时，在「职责」格盖一张 b=0 的整格纹理：
+-- 消费端读到职责 0 就整人跳过（不加血、不驱散、不补 buff）。
+-- 只能用 HELPFUL 裸过滤（可能是别的牧师给的）；覆盖容器要比队伍容器高一层。
 -- ================================================================
 local GROUP_ROLE_ZERO_AURA_ID = 27827
 local groupRoleOverlayContainers = {}   -- [memberIndex] = AuraContainer
@@ -598,8 +558,8 @@ local function MakeRoleZeroInitializer(index)
         button:SetSize(AURA_BLOCK_W, AURA_BLOCK_H)
         ConfigureAuraButtonMouse(button)
         button:SetPoint("TOPLEFT", UIParent, "TOPLEFT", AuraBlockXOffset(index), 0)
-        -- 用绝对层级而不是 GetFrameLevel()+1：引擎按钮的读取在受限上下文里可能被拒，
-        -- 绝对层级（9005）已经高于色条 9001 和队伍容器 9003，效果一样且不会抛错
+        -- 用绝对层级而不是 GetFrameLevel()+1：受限上下文里读层级可能被拒；
+        -- 9005 已高于色条 9001 和队伍容器 9003
         button:SetFrameLevel(AURA_DURATION_LEVEL + 2)
 
         local bg = button:CreateTexture(nil, "ARTWORK")

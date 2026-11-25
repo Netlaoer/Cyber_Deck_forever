@@ -1,10 +1,7 @@
 local addon, ns = ...
 local isSec = issecretvalue
 
--- UNIT_AURA 的 info 字段（isFullUpdate / addedAuras / updated... / removed...）
--- 在战斗中全是 secret。直接 `if info.x then` 会抛
--- "attempt to perform boolean test on field 'isFullUpdate' (a secret boolean value)"。
--- 统一取真值：读不到就返回 false，等价于"这次事件没有这一项"。
+-- UNIT_AURA 的 info 字段在战斗中全是 secret，直接做布尔判断会抛错；读不到按 false 处理
 local function safeTruthy(v)
     if type(isSec) == "function" and isSec(v) then return false end
     return v and true or false
@@ -64,9 +61,8 @@ end
 
 local curve100 = creatColorCurveScaling(100)
 
--- 队伍生命曲线必须在进战斗前建好：战斗中首次调用 C_CurveUtil.CreateColorCurve 不被允许
--- （Shingen core/curves.lua:47-53 同款约定）。取值只有这几种：
---   100 + inComingHeals(15/40/50) - healAbsorb(15/0)
+-- 队伍生命曲线必须脱战预建（战斗中不允许首次 CreateColorCurve）。取值只有
+-- 100 + inComingHeals(15/40/50) - healAbsorb(15/0)
 for _, b in ipairs({ 85, 115, 125, 135, 140, 150 }) do
     creatColorCurveScaling(b)
 end
@@ -74,10 +70,7 @@ end
 local curve255 = CyberDeck:creatColorCurve(255, 255)
 local castCurve = CyberDeck:creatColorCurve(2.55, 255)
 
--- UnitPowerType() 返回的是**数值**（0 = MANA），而 EnumPowerType 的键是字符串
--- （"MANA" / "COMBO_POINTS" ...）。以前直接用 EnumPowerType[powerType] 恒为 nil，
--- 靠 UnitPower(unit, nil) 默认回落到主资源才碰巧能用；
--- 接连击点 / 神圣能量这类特殊资源前必须显式换算，否则特殊格永远写不出去。
+-- UnitPowerType() 返回数值、EnumPowerType 键是字符串，读连击点/神圣能量这类特殊资源前必须换算
 local function toPowerEnum(powerType)
     if type(powerType) == "string" then
         return EnumPowerType[powerType]
@@ -101,8 +94,7 @@ function CyberDeck:CreatPowerCurve(powerType)
     end
 end
 
--- 单体读条治疗法术
--- 施法目标的生命值增加值,防止对同一个目标重复施法,导致过量治疗
+-- 单体读条治疗：法术ID -> 预估治疗量，避免对同一目标重复施法过量治疗
 local helpfulSpells = {
     [2061] = 15,    -- 快速治疗
     [1262763] = 15, -- 祈福
@@ -123,10 +115,7 @@ target.friendCurve:SetType(Enum.LuaCurveType.Step)
 --                          通用函数
 -- ================================================================
 
--- 统计单位身上的负面光环数量（牧师「目标光环数量」块用）
---
--- ⚠️ 受限（战斗中）时 GetAuraInstanceIDs 返回 nil（读不到），
---    这里统一当 0 处理 —— 像素写 0，决策层就不驱散（宁可漏驱也不空放）。
+-- 单位身上的负面光环数量（战斗中读不到按 0 处理，决策层不会因此去驱散）
 function CyberDeck:updateUnitAuraCount(unit)
     local auraInstanceIDs = self:GetAuraInstanceIDs(unit, "HARMFUL|PLAYER", 40)
     if auraInstanceIDs then
@@ -140,8 +129,7 @@ local function updateUnitRange(unit)
     return minRange, maxRange
 end
 
--- 打印成功施放的技能id和名称, 不重复打印已经施放的技能
--- 打印格式为  [spellID] = { index = i, }, -- 技能名称
+-- 打印成功施放的技能ID与名称（不重复），格式：[spellID] = { index = i }, -- 名称
 local succSpells = {}
 local succIndex = 1
 local function printSuccSpell(spellID)
@@ -152,10 +140,7 @@ local function printSuccSpell(spellID)
     succIndex = succIndex + 1
 end
 
--- 调试：打印技能的充能字段结构（默认 1247378）。
--- 原先是 local 函数且调用点被注释，等于永远调不到；还原时改成方法，方便手动跑：
---   /run CyberDeck:getSpellChargesInfo()
---   /run CyberDeck:getSpellChargesInfo(<spellID>)
+-- 调试：打印技能充能字段。用法 /run CyberDeck:getSpellChargesInfo() 或传 spellID
 function CyberDeck:getSpellChargesInfo(spellID)
     local charges = C_Spell.GetSpellCharges(spellID or 1247378)
     for k, v in pairs(charges or {}) do
@@ -163,11 +148,8 @@ function CyberDeck:getSpellChargesInfo(spellID)
     end
 end
 
--- 驱散能力映射
--- 无限服是经典（1.60.1）法术 ID：圣骑士只学到 纯净术(1152，驱疾病+中毒) 和 清洁术(4987，驱魔法+疾病+中毒)。
--- 正式服那套 ID 在无限服一个都对不上 -> hasLearnedAnySpell 全 false -> 曲线 3/4 号点位写成 0
--- -> 队友的“驱散”像素恒为 0 -> 决策层永远找不到要驱散的人（只有魔法那档侥幸命中 4987）。
--- [2] 诅咒保持全 false：经典圣骑士没有驱诅咒的法术（清洁术只驱魔法/疾病/中毒）。
+-- 驱散能力映射：无限服是经典法术ID（圣骑士只有 纯净术1152 / 清洁术4987，正式服ID对不上）；
+-- 经典圣骑士无驱诅咒法术，[2] 保持空
 local dispelAbilities = {
     [1] = { 527, 360823, 4987, 115450, 88423, 77130 },                      -- 魔法驱散
     [2] = { 383016, 51886, 392378, 2782, 475 },                             -- 诅咒驱散
@@ -192,19 +174,12 @@ local function hasLearnedAnySpell(spellIDs)
 end
 
 -- ================================================================
--- 光环受限（secret）适配 —— 只影响**目标侧**
---
--- 战斗中 / 首领战中 C_UnitAuras 返回 secret 值，读不到减益类型，
--- 所以「目标类型」像素会退回基线（友善 11 / 敌对 1）。
--- 这只会影响「按敌人减益类型选技能」这类判断。
---
--- ★ 队友侧不受此限：那一侧由 AuraContainer 的引擎计时驱动，
---   插件侧不读光环，见 core/group_aura.lua。
+-- 光环受限（secret）适配：只影响目标侧
+-- 战斗中 C_UnitAuras 读不到减益类型，「目标类型」退回基线（友 11 / 敌 1）；
+-- 队友侧由 core/group_aura.lua 的引擎计时驱动，不读光环。
 -- ================================================================
 
--- 遍历光环列表，找第一个「玩家能驱散」的（曲线求值非零）
--- 只看 ids[1] 是不够的：第一个减益可能正好是自己驱不掉的那种
--- ★ 只用于目标侧（getTargetDispelType），队友侧不走这里。
+-- 遍历光环列表找第一个玩家能驱散的类型（只看 ids[1] 会漏），仅用于目标侧
 local function pickTypeByCurve(unit, ids, curve)
     if not ids then return nil end
     for i = 1, #ids do
@@ -216,18 +191,13 @@ local function pickTypeByCurve(unit, ids, curve)
     return nil
 end
 
--- ================================================================
-
-
 local function updateCooldownSpellKnown()
     spells = {}
     if not blocks or not blocks.spells then return end
     C_Timer.After(1, function()
         for spellID, info in pairs(blocks.spells) do
-            -- key 已经是 ResolveSpellID 用 C_SpellBook.IsSpellKnown 过滤过的 rank ID，
-            -- 直接信任解析结果。正式服那套全局 IsSpellKnown / IsSpellInSpellBook 复核在这里
-            -- 不适用：无限服是经典技能组，两套 API 对 rank 的语义不一致，
-            -- 会把已学会的技能整体误标成 255，整条决策链失效。
+            -- key 已是 ResolveSpellID 用 IsSpellKnown 过滤过的 rank ID，直接信任；
+            -- 无限服的 IsSpellKnown 语义与正式服不同，再复核会把已学技能整体误标成 255
             local isKnown = true
             local index = info.index
             if isKnown or info.forcedKnown then
@@ -287,12 +257,8 @@ function CyberDeck:updateSpellKnown()
     end
 end
 
--- secret 上下文探测：/cy secrets
--- 无限服 1.60.1 带零售同款的 Secret Values 机制：C_Secrets 的谓词能直接问
--- 「当前上下文里这一类数据会不会变成 secret 值」，比逐字段试读准得多
--- （逐字段试读只能告诉你「这一次读到了什么」，不能告诉你「什么时候会变」）。
--- 用法：/cy secrets      —— 脱战时跑一次
---       /cy secrets 战斗 —— 战斗中再跑一次，对比两组的差异
+-- secret 上下文探测（/cy secrets）：用 C_Secrets 谓词判断当前上下文哪类数据会变 secret
+-- 脱战 / 战斗中各跑一次可对比差异
 function CyberDeck:PrintSecretContext()
     print("|cff00ff00[Cyber Deck]|r secret 上下文探测")
 
@@ -364,8 +330,7 @@ function CyberDeck:PrintSecretContext()
         print(("  |cff888888UnitIsUnit 可用|r：%s"):format(cmp and "是" or "否（返回 nil）"))
     end
 
-    -- 单个法术的光环保密等级（比全局谓词更精确：只有个别法术被标记 secret）
-    -- GetSpellAuraSecrecy 返回 Enum.SecrecyLevel 枚举，不是布尔
+    -- 单个法术的光环保密等级（返回 Enum.SecrecyLevel 枚举，不是布尔）
     if C_Secrets.GetSpellAuraSecrecy and Enum and Enum.SecrecyLevel then
         print("  |cff888888单个法术的光环保密等级（NeverSecret = 任何时候都可读）|r")
         local probes = { 4987, 1152, 20927, 20473, 25780, 20271 }
@@ -408,8 +373,7 @@ function CyberDeck:updatePlayerBlocks()
     self:updatePlayerChannelingInfo()               -- 8.引导
     self:updatePlayerHealth()                       -- 11.生命值
     self:updatePlayerPowerType()                    -- 12.能量值
-    -- 15.目标类型：必须先算 canAttack/canAssist，否则登录/重载时已经带着目标
-    -- 也会被 updateTargetValid 写成 0（要等换目标才恢复）
+    -- 目标类型：必须先算 canAttack/canAssist，否则登录/重载时带着目标也会被写成 0
     self:updateTargetType()
     self:updateGroupType()                          -- 16.队伍类型
     self:updateGroupCount()                         -- 17.队伍人数
@@ -427,8 +391,7 @@ function CyberDeck:updatePlayerBlocks()
     end)
 end
 
--- 队伍块里的驱散字段（class/*.lua 的 group 表） -> 引擎的类型名
--- 与 Shingen block.lua:1140-1146 的 DISPEL_DURATION_FIELDS 同名同序
+-- class/*.lua 的 group 驱散字段 -> 引擎的类型名
 local DISPEL_GROUP_FIELDS = {
     Magic = "dispelMagic",
     Curse = "dispelCurse",
@@ -440,9 +403,7 @@ local DISPEL_GROUP_FIELDS = {
 function CyberDeck:loadPlayerBlocks(specIndex)
     local t = specIndex and self.ClassBlocks and self.ClassBlocks[specIndex]
     if not t then
-        -- 本服没有这个职业（死骑/武僧/DH/唤魔师），或该专精没配块：
-        -- 给一套空表，后面所有 blocks.state[...] 都是 nil，CreatTexture 会跳过 nil 索引，
-        -- 插件保持空转，而不是抛 "attempt to index a nil value" 把 OnEnable 打断。
+        -- 该职业/专精没配块：给空表，CreatTexture 遇 nil 索引会跳过，插件空转不报错
         blocks = { state = {}, auras = {}, spells = {} }
         self.blocks = blocks
         if not self.ClassBlocks and not self.noBlocksWarned then
@@ -507,15 +468,12 @@ function CyberDeck:loadPlayerBlocks(specIndex)
             blocks.groups.healthPercent = v.healthPercent
             blocks.groups.role = v.role
             blocks.groups.auras = v.auras
-            -- 驱散格：每个「能驱的类型」一个相对格号（Shingen 同款）
-            --   类型名 -> 相对偏移；没有就表示本职业不建这一格
-            --   旧字段 dispel（单格类型号）不再使用，属于已废弃协议
+            -- 驱散格：每个可驱类型一个相对格号；旧字段 dispel（单格类型号）已废弃
             blocks.groups.dispelCells = nil
             for typeName, field in pairs(DISPEL_GROUP_FIELDS) do
                 if v[field] then
-                    -- ★ 必须平铺到 blocks.groups 上：core/group_aura.lua 的
-                    --   CollectGroupDispelDefs（照搬 Shingen）读的是 groups.dispelMagic /
-                    --   dispelCurse / ...，只放进 dispelCells 它一个都看不到 -> 格=空、容器 0 个。
+                    -- 必须同时平铺到 groups 上：group_aura 的 CollectGroupDispelDefs
+                    -- 读的是 groups.dispelMagic / dispelCurse / ...，只放进 dispelCells 它看不到
                     blocks.groups[field] = v[field]
                     blocks.groups.dispelCells = blocks.groups.dispelCells or {}
                     blocks.groups.dispelCells[typeName] = v[field]
@@ -527,9 +485,8 @@ function CyberDeck:loadPlayerBlocks(specIndex)
         end
     end
     self.blocks = blocks
-    -- ★ 换专精/重载 blocks 后队伍块的 start/num 都可能变（神圣 7 格 ↔ 防护 5 格），
-    --   容器里的 slot 还绑在旧格号上，必须整体释放，由下一轮 Refresh 按新布局重建。
-    --   （AuraContainer 的 slot 不能删，只能丢弃容器重来 —— Shingen 同款）
+    -- 换专精后队伍块 start/num 会变（神圣 7 格 ↔ 防护 5 格），容器 slot 还绑在旧格号上，
+    -- 只能整体释放，由下一轮 Refresh 按新布局重建
     if self.ReleaseGroupAuraContainers then
         self:ReleaseGroupAuraContainers()
     end
@@ -543,10 +500,8 @@ function CyberDeck:loadPlayerBlocks(specIndex)
     end
 end
 
---- loadPlayerBlocks 会释放三类引擎容器（队伍驱散/buff、鼠标探针、目标审判），
---- 因为它们的 slot 绑在旧格号上、删不掉只能丢弃重建。
---- 所以凡是调用过 loadPlayerBlocks 的地方，blocks 换新之后必须调一次本函数按新格号重建，
---- 否则对应像素会停更，直到下次进战斗（PLAYER_REGEN_DISABLED）或花名册变化（updateGroup）。
+--- loadPlayerBlocks 会释放三类引擎容器（slot 绑在旧格号上、删不掉只能重建），
+--- 调用过它的地方换完 blocks 必须调本函数，否则对应像素停更到下次进战斗/花名册变化
 function CyberDeck:RefreshEngineContainers()
     if self.RefreshGroupAuraContainers then self:RefreshGroupAuraContainers() end
     if self.RefreshMouseoverDispelContainer then self:RefreshMouseoverDispelContainer() end
@@ -595,11 +550,8 @@ end
 function CyberDeck:updatePlayerSpecInfo()
     self:clearAllTextures()
     local newSpecIndex = self:GetActiveSpecIndex()
-    -- 换专精：把上一套专精建的计数条清掉重建。
-    -- 正式服在施法 384255 / 200749（切天赋/切专精）时做同一件事，
-    -- 无限服没有那两个法术，改天赋走 PLAYER_TALENT_UPDATE，所以在这里补。
-    -- 必须在 loadPlayerBlocks 之前清：CreateAutoLayoutBar 开头有
-    -- 「spellIdToBar 已有就复用」的复检，不先清会命中旧映射，条不会重建。
+    -- 换专精：先清计数条再 loadPlayerBlocks（CreateAutoLayoutBar 有 spellIdToBar 复用检查，
+    -- 不先清会命中旧映射，条不会重建）
     if self.state.specIndex and self.state.specIndex ~= newSpecIndex then
         self:ClearAllCyberDeckBars()
     end
@@ -613,8 +565,7 @@ function CyberDeck:updatePlayerSpecInfo()
 
     self:updateSpellKnown()                     -- 更新法术已知状态
     self:updatePlayerBlocks()                   -- 更新玩家blocks信息
-    -- updatePlayerBlocks → updateGroup 会重建队伍/审判/救赎之魂容器，但**不会**重建鼠标探针；
-    -- 而上面 loadPlayerBlocks 已经把它释放了，这里补一次（339 格号可能随专精变）。
+    -- updateGroup 不重建鼠标探针，而 loadPlayerBlocks 已释放它，这里补一次
     if self.RefreshMouseoverDispelContainer then
         self:RefreshMouseoverDispelContainer()
     end
@@ -714,7 +665,7 @@ function CyberDeck:updatePlayerPower(powerType)
                 self:CreatTexture(blockIndex, (power or 0) / 255)
             end
         else
-            -- 无限服没有秘密值系统：法力/怒气等直接按百分比写入 12.能量值
+            -- 非 secret：法力/怒气按百分比写入 12.能量值
             local maxPower = UnitPowerMax("player", powerEnum)
             local blockIndex = blocks.state["能量值"]
             if blockIndex and maxPower and maxPower > 0 then
@@ -785,9 +736,7 @@ local function getTargetDispelType()
         return 0
     end
 
-    -- ⚠️ 受限时**照样尝试读**（pcall 保护）：
-    --   客户端自带的 EUI 就是用 pcall 试读判断受限的，调用本身不污染 taint。
-    --   读不到时 pickTypeByCurve(nil) 返回 nil -> 自然回落到基准值 b。
+    -- 受限时照样 pcall 试读：读不到时 pickTypeByCurve 返回 nil，自然回落到基准值 b
     local auraInstanceIDs = CyberDeck:GetAuraInstanceIDs(unit, filter, 40)
 
     -- 逐个试，别只看第一个：第一个光环可能不是自己能驱散的那种
@@ -986,19 +935,12 @@ end
 --                          目标信息
 -- ================================================================
 --[[
-    0 = "没有目标"
-
-    1 = "敌方",
-    2 = "敌方 有魔法 增益 "
-    3 = "敌方 有激怒 增益",
-
-    11 = "友方"
-    12 = "友方 有魔法 减益"
-    13 = "友方 有诅咒 减益"
-    14 = "友方 有疾病 减益"
-    15 = "友方 有中毒 减益"
-
-    （取值 = debuffType + 11：1魔法 2诅咒 3疾病 4中毒 -> 12/13/14/15）
+    目标类型取值：
+      0        没有目标
+      1        敌方
+      2 / 3    敌方带魔法 / 激怒增益
+      11       友方
+      12..15   友方带魔法/诅咒/疾病/中毒减益（= debuffType + 11）
 ]]
 
 function CyberDeck:updateTargetType()
@@ -1023,8 +965,7 @@ function CyberDeck:updateTargetRangeBlock()
         end
     end
     if blocks and blocks.state["目标距离"] then
-        -- 没有目标/拿不到距离时必须写 0，否则像素会保留上一次的值（例如一直显示 20 码），
-        -- 决策层会误判为“目标在近战范围内”
+        -- 无目标/读不到距离时必须写 0，否则像素保留上次值，决策层会误判为在近战范围
         if target.maxRange then
             self:CreatTexture(blocks.state["目标距离"], target.maxRange / 255)
         else
@@ -1085,9 +1026,8 @@ function CyberDeck:updateUnitCastingOrChannelingInfo(unit)
     end
 end
 
--- 目标读条 -> 「目标施法」格。唯一消费方是惩戒的「制裁之锤 打断」，
--- 所以只写**可打断**的读条（剩余秒数）；不可打断写 0，避免白交一次 1 分钟 CD。
--- 引导（UnitChannelDuration）也算：制裁之锤同样能打断引导。
+-- 目标读条 -> 「目标施法」格（惩戒制裁之锤打断用）：只写可打断的剩余秒数，
+-- 不可打断写 0，避免白交一次 1 分钟 CD；引导同样可打断
 function CyberDeck:updateTargetCastingInfo()
     if not blocks or not blocks.state["目标施法"] then return end
     local index = blocks.state["目标施法"]
@@ -1114,11 +1054,8 @@ function CyberDeck:updateTargetCastingInfo()
         return
     end
 
-    -- ⚠️ notInterruptible 在本服是 **secret boolean**，绝不能写 `if notInterruptible`
-    -- （2026-11-24 线上报错：attempt to perform boolean test on a secret boolean value）。
-    -- 只能交给引擎侧的 EvaluateColorFromBoolean 选颜色，插件侧不做布尔判断：
-    --   可打断   -> 剩余秒数曲线（>0，消费端才会去制裁之锤）
-    --   不可打断 -> falseValueBlack（b=0，消费端不会白交一次 1 分钟 CD）
+    -- notInterruptible 在本服是 secret boolean，不能做布尔判断，只能交给
+    -- EvaluateColorFromBoolean 选色：可打断 -> 剩余秒数曲线，不可打断 -> 0
     local durationColor = duration:EvaluateRemainingDuration(castCurve)
     local booleanValue = EvaluateColorFromBoolean(notInterruptible, falseValueBlack, durationColor)
     ---@diagnostic disable-next-line: param-type-mismatch
@@ -1349,15 +1286,12 @@ local function updateUnitIncomingHealsCurve2()
     end
 end
 
--- 队伍 buff 格的 Lua 兜底读取：只在引擎容器没建起来时才会被用到
--- （正常情况由 core/group_aura.lua 的 AuraContainer 写，OnUpdateUnitAura 会停写）。
--- 过滤器只用客户端明确的 PLAYER|HELPFUL：之前多挂的 RAID_IN_COMBAT 语义不明确，
--- 可能把长 buff（圣光誓约这种 5 分钟）过滤掉，导致兜底永远读成「没有」。
+-- 队伍 buff 格的 Lua 兜底读取：只在引擎容器没建起来时才会用到
+-- 过滤器只用 PLAYER|HELPFUL，多挂 RAID_IN_COMBAT 可能把长 buff 过滤掉
 function CyberDeck:updateUnitFullAura(unit)
     local obj = group[unit]
     if not obj then return end
-    -- 扫 10 个：坦身上常有力量/智慧/王者/光环/圣印/合剂等多条 buff，
-    -- 只扫前 5 个会漏掉排在后面的圣光守望/圣光誓约
+    -- 扫 10 条：坦身上 buff 多，只扫前 5 条会漏掉排在后面的圣光守望/圣光誓约
     for i = 1, 10 do
         local okb, buff = pcall(C_UnitAuras.GetBuffDataByIndex, unit, i, "PLAYER|HELPFUL")
         if okb and buff then
@@ -1398,8 +1332,7 @@ end
 
 function CyberDeck:OnUpdateUnitAura()
     if not blocks or not blocks.groups or not blocks.groups.auras then return end
-    -- 队伍 buff 格由引擎（core/group_aura.lua 的 AuraContainer）接管后，Lua 侧必须停写：
-    -- 战斗中 C_UnitAuras 读不到（secret），这里会写 0，把引擎算好的剩余秒数盖掉。
+    -- 引擎接管后 Lua 侧必须停写：战斗中读不到会写 0，盖掉引擎算好的剩余秒数
     local writeAuraPixels = not self.groupAuraBuffEngineReady
     for unit, data in pairs(group) do
         if writeAuraPixels then
@@ -1432,9 +1365,8 @@ function CyberDeck:OnUpdateUnitAura()
 end
 
 function CyberDeck:updateGroup()
-    -- ⚠️ 必须用 wipe 而不是 `self.group = {}`：
-    --    group / groupList 在文件顶部被 local 捕获过（local group = CyberDeck.group），
-    --    重建 self.group 会让 local 继续指向旧表 —— 数据写进旧表、self.group 永远为空。
+    -- 必须用 wipe 而不是 self.group = {}：group/groupList 在文件顶部被 local 捕获过，
+    -- 重建 self.group 会让 local 继续指向旧表
     wipe(self.group)
     wipe(self.groupList)
     local i = 1
@@ -1467,10 +1399,8 @@ function CyberDeck:updateGroup()
         i = i + 1
     end
 
-    -- ★ 空槽位清零：退队/人数减少后，旧槽位的生命值/职责会保留上一次写的值，
-    --   决策层就会选到一个「不存在的队友」；宏是 [group:raid,@raidN]，N 不存在时
-    --   落到末尾的 [@player] -> 变成给自己驱散（这正是「看着自己才驱散」的来源之一）。
-    --   驱散格不用清：容器 Hide 后按钮不显示，露出的就是色条底色 0。
+    -- 空槽位清零：人数减少后旧槽位残留会被决策层选中，宏落到 [@player] 变成给自己驱散
+    -- 驱散格不用清：容器 Hide 后露出色条底色 0
     if blocks and blocks.groups then
         local g = blocks.groups
         local aliveCount = #groupList
@@ -1553,9 +1483,7 @@ end
 function CyberDeck:PLAYER_TALENT_UPDATE()
     self:updatePlayerSpecInfo()
     self:updateGroup()
-    -- 事件触发时天赋点数可能还是旧值（服务器未同步），再延迟刷两次兜底。
-    -- 无限服切天赋的 spellID 不是正式服的 384255 / 200749，那条延迟路径走不到，
-    -- 所以必须在这里补，否则 GUI 会一直显示切换前的专精。
+    -- 天赋点数可能还是旧值，延迟刷两次兜底（无限服没有切专精法术事件）
     for _, delay in ipairs({ 0.5, 2.0 }) do
         C_Timer.After(delay, function()
             if InCombatLockdown() then return end
@@ -1593,10 +1521,8 @@ end
 function CyberDeck:PLAYER_REGEN_DISABLED()
     self:updateTargetType()
     self:updatePlayerCombat()
-    -- 进战斗也重刷一次：引擎（AuraContainer）会在战斗开始时重置 SetUnit 绑定，
-    -- 之前只在脱战（PLAYER_REGEN_ENABLED）重绑，导致战斗中容器染色失效 -> 不驱散。
-    -- 用户反馈「打一次 /cy dispelprobe 就正常」正是因为探针里手动重试了 Refresh。
-    -- 用 Refresh 而不是 RebindAll：Refresh 会补建缺失的容器（单人进战斗时容器可能还没建）。
+    -- 进战斗也重刷：引擎会在战斗开始时重置 SetUnit 绑定，不重绑会导致容器染色失效
+    -- 用 Refresh 而不是 RebindAll：Refresh 会补建缺失的容器
     if self.RefreshGroupAuraContainers then
         self:RefreshGroupAuraContainers()
     end
@@ -1705,8 +1631,7 @@ end
 
 function CyberDeck:UNIT_SPELLCAST_SUCCEEDED(_, unitTarget, castGUID, spellID, castBarID)
     if unitTarget ~= "player" then return end
-    -- 必须在 isSec 过滤之前：战斗中 spellID 可能被保护，
-    -- 放到后面会让常驻 buff 的有效期锁根本建不起来（像素恒 0 → 反复重开）
+    -- 必须在 isSec 过滤之前：战斗中 spellID 可能被保护，放后面常驻 buff 的锁就建不起来
     if self.MarkForeverAuraCast then
         pcall(self.MarkForeverAuraCast, self, spellID)
     end
@@ -1754,9 +1679,7 @@ function CyberDeck:SPELL_ACTIVATION_OVERLAY_HIDE(_, spellId)
     self:updateAuraByActivationOverlayHide(spellId)
 end
 
--- 关注的物品 ID 集合（取无限服物品组 core/forever.lua 的 F.itemGroups）
--- 原来这里写的是正式服物品 ID（241304 银月城生命药水 / 224464 恶魔治疗石 等），
--- 无限服一个都对不上 -> ITEM_COUNT_CHANGED 永远不触发 -> 物品数量不刷新。
+-- 关注的物品 ID（core/forever.lua 的 itemGroups；正式服 ID 在无限服对不上）
 local trackedItems = {}
 for _, ids in pairs(CyberDeck.itemGroups or {}) do
     for _, id in ipairs(ids) do
@@ -1879,8 +1802,7 @@ function CyberDeck:SPELLS_CHANGED()
     if not InCombatLockdown() and self.state and self.state.specIndex then
         self:loadPlayerBlocks(self.state.specIndex)
         self:updateSpellKnown()
-        -- loadPlayerBlocks 已把队伍/鼠标/审判三类引擎容器释放掉（slot 绑旧格号），
-        -- 这里必须立刻按新 blocks 重建，否则相关像素要停更到下次进战斗或花名册变化。
+        -- loadPlayerBlocks 已释放引擎容器，这里必须按新 blocks 重建
         self:RefreshEngineContainers()
     end
 end
@@ -1902,10 +1824,7 @@ function CyberDeck:PLAYER_TARGET_CHANGED()
 end
 
 function CyberDeck:UPDATE_MOUSEOVER_UNIT()
-    -- 鼠标指向的驱动：mouseover 引擎探针（绑 mouseover 的 AuraContainer，
-    -- 引擎算剩余秒数写「鼠标可驱」格，战斗中同样有效）。
-    -- RefreshMouseoverDispelContainer 内部只在 UnitGUID 变化时重绑，
-    -- 所以这里高频触发也没关系（不会每帧 SetUnit）。
+    -- 驱动 mouseover 引擎探针；Refresh 内部只在 UnitGUID 变化时重绑，高频调用无妨
     if self.RefreshMouseoverDispelContainer then
         self:RefreshMouseoverDispelContainer()
     end
@@ -1931,8 +1850,7 @@ function CyberDeck:UPDATE_SHAPESHIFT_FORMS()
     self:updatePlayerMounted()
 end
 
--- 调试：逐个过滤器 token 打印这条光环是否被过滤掉（排查 P0-2 那类问题时用）。
---   /run CyberDeck:TestFiltered("player", <auraInstanceID>)
+-- 调试：逐个过滤器打印光环是否被过滤（/run CyberDeck:TestFiltered("player", <auraInstanceID>)）
 function CyberDeck:TestFiltered(unit, auraInstanceID)
     local AuraFilters = {
         "HELPFUL",
@@ -1966,33 +1884,14 @@ function CyberDeck:TestFiltered(unit, auraInstanceID)
 end
 
 -- ================================================================
--- 队伍驱散像素（照抄 Shingen Forever 版 block.lua:1148-1386）
---
--- 编码（与 Shingen 一致，**不再是类型号**）：
---   每个能驱的类型各占一格，蓝通道 = 该类型在队友身上「最长的剩余秒数」
---     0        = 没有这类减益
---     1        = 有，但不足 1 秒
---     2..254   = 剩余秒数
---     255      = 超过 255 秒 / 永久
---
--- 为什么不再用「一格 + 类型号」：
---   那种写法必须让引擎按 debuff 类型给纹理染色（AddDispelTypeTexture），
---   战斗中类型是 secret，染色链路一断整格就是 0。
---   Shingen 的做法是让引擎用**原生计时文字**驱动颜色：剩余时间是引擎自己算的，
---   插件侧完全不碰光环数据，所以脱战/战斗同一套，不需要两条通道。
---
--- 三条硬约束（缺一不可）：
---   1) 每个类型一条 slot，candidateFilters.includeDispelTypes 只放这一个类型
---   2) SetUnit 会冲掉候选过滤 -> 换单位后必须重绑再 UpdateAllAuras
---   3) 按钮锚 UIParent 的那一格 + SetClipsChildren(true)，cell 子框负责可见范围
---
--- 驱散探针诊断（/cy dispelprobe）
---
--- 像素本身由 core/group_aura.lua（严格照搬 Shingen）负责，这里只读状态：
---   按钮=无 / slots=0            -> slot 没建（AddAuraSlot 或格号越界）
---   按钮=有 + 文字b=0 + 有减益   -> 引擎没染色（SetUnit/过滤没生效）
---   文字b>0 但 Python 读 0      -> 解码几何错位
--- 战斗中 C_UnitAuras 读不到，最后一行会显示「读不到」，属正常。
+-- 队伍驱散像素（引擎 AuraContainer，照搬 Shingen）
+-- 编码：每个可驱类型每人一格，蓝通道 = 该类型最长剩余秒数
+--   0 = 无   1 = 不足 1 秒   2..254 = 剩余秒数   255 = 超过 255 秒 / 永久
+-- 三条约束：1) 每类型一条 slot，候选过滤只放该类型
+--           2) SetUnit 会冲掉候选过滤 -> 换单位后必须重设再 UpdateAllAuras
+--           3) 按钮锚 UIParent 那一格 + SetClipsChildren(true)
+-- 诊断 /cy dispelprobe：按钮=无 / slots=0 -> slot 没建；文字 b=0 且有减益 -> 引擎没染色；
+--   文字 b>0 但 Python 读 0 -> 解码几何错位；战斗中读不到属正常
 -- ================================================================
 
 --- 读某单位身上「玩家可驱」的减益：返回 条数, "Magic,Disease"；战斗中返回 nil
@@ -2111,15 +2010,12 @@ function CyberDeck:PrintDispelProbeDebug()
     end
 end
 
--- 队伍驱散格**只有引擎一个写入方**（Shingen 同款）：
--- 计时文字的颜色由引擎按剩余秒数算，Lua 侧不读光环、也不写那一格。
--- 脱战/战斗是同一套，不存在两条通道抢同一格的问题。
+-- 队伍驱散格只有引擎一个写入方：计时文字颜色由引擎按剩余秒数算，
+-- Lua 侧不读光环、也不写那一格，脱战/战斗同一套
 
 function CyberDeck:UNIT_AURA(_, unit, info)
-    -- 鼠标指向驱散后的「引擎没及时清理」：减益被驱掉后，这里立即让引擎重新评估
-    -- 按钮显示，把已驱减益的按钮隐藏、「鼠标可驱」格及时清零（否则残留旧值 > 0
-    -- 会让决策层重复驱散）。UNIT_AURA 的 unit 对鼠标指向单位可能是 "mouseover" 或
-    -- 实际 token（party1 等），所以只要鼠标探针容器在绑定状态就刷新，不精确匹配。
+    -- 鼠标指向的减益被驱掉后，让引擎立即重新评估按钮显示，把「鼠标可驱」格清零
+    -- （残留旧值 > 0 会让决策层重复驱散）。unit 可能是 mouseover 或实际 token，不精确匹配
     if self.RefreshMouseoverDispelAuras then
         self:RefreshMouseoverDispelAuras()
     end
@@ -2170,8 +2066,7 @@ end
 
 CyberDeck.timeElapsed = 0
 function CyberDeck:OnUpdate(elapsed)
-    -- 1. 高频逻辑（每帧执行）
-    -- 这里的函数必须确保能被访问到，如果是成员函数请加 self:
+    -- 1. 高频逻辑（每帧）；成员函数用 self: 调用
     self:updatePlayerCastingInfo()
     self:updatePlayerChannelingInfo()
     self:updateUnitCastingOrChannelingInfo("target")
@@ -2180,9 +2075,7 @@ function CyberDeck:OnUpdate(elapsed)
     self:updateGroupInRangeAndHealth()
     self:updateAura()
     self:updateTargetAuraCount()
-    -- 2. 低频逻辑（每 0.12 秒执行）
-    -- 技能 CD 走这一档，0.2 秒会让「CD 好了但还没放」多等最多 200ms；
-    -- 降到 0.12 与 Python 侧的 0.1 错开，避免两边同频导致一顿一顿。
+    -- 2. 低频逻辑（0.12 秒）：与 Python 侧 0.1 秒错开，避免同频卡顿
     self.timeElapsed = self.timeElapsed + elapsed
     if self.timeElapsed > 0.12 then
         self:updateSpellCooldown()

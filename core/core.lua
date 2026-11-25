@@ -1,15 +1,13 @@
 local addon, ns = ...
 local className, classFilename, classId = UnitClass("player")
 CyberDeck = LibStub("AceAddon-3.0"):NewAddon("CyberDeck", "AceEvent-3.0", "AceConsole-3.0")
-local AC = LibStub("AceConfig-3.0") -- AceConfig-3.0 是 Ace3 库中的一个模块，用于注册和管理配置选项
+local AC = LibStub("AceConfig-3.0")
 local ACD = LibStub("AceConfigDialog-3.0")
 
 function CyberDeck:OnInitialize()
-    -- 使用“默认”配置文件，而非特定角色的配置文件。
-    -- https://www.wowace.com/projects/ace3/pages/api/ace-db-3-0
+    -- 默认配置文件（非角色专用）
     self.db = LibStub("AceDB-3.0"):New("CyberDeckADB", self.defaults, true)
-    -- 注册一个选项表，并将其添加到暴雪选项窗口中。
-    -- https://www.wowace.com/projects/ace3/pages/api/ace-config-3-0
+    -- 注册选项表并挂到暴雪选项窗口
     AC:RegisterOptionsTable("CyberDeck_Options", self.options)
     self.optionsFrame = ACD:AddToBlizOptions("CyberDeck_Options", "Cyber Deck")
     -- 添加一个子选项表 —— 即我们的配置文件面板。
@@ -111,7 +109,7 @@ function CyberDeck:SwitchCooldown()
     local c = self.db and self.db.char
     if not c then return end
     if c.cooldowns == 0 then
-        print("|cff00ff00[Cyber Deck]|r 爆发已|cffff0000关闭|r") -- 修改"关闭"为红色
+        print("|cff00ff00[Cyber Deck]|r 爆发已|cffff0000关闭|r")
     else
         print("|cff00ff00[Cyber Deck]|r 爆发已|cff00ff00开启|r")
     end
@@ -147,7 +145,7 @@ function CyberDeck:SwitchDpsMode()
     local c = self.db and self.db.char
     if not c then return end
     if c.dpsMode == 0 then
-        print("|cff00ff00[Cyber Deck]|r 输出模式已修改为|cff00ff00官方一键辅助|r") -- 修改"关闭"为红色
+        print("|cff00ff00[Cyber Deck]|r 输出模式已修改为|cff00ff00官方一键辅助|r")
     else
         print("|cff00ff00[Cyber Deck]|r 输出模式已修改为|cff00ff00手动编写逻辑|r")
     end
@@ -396,9 +394,8 @@ function SetTestSecret(set)
     end
 end
 
--- 加载时不再自动改 CVar：secret*RestrictionsForced / scriptErrors 都是用户自己的设置，
--- 插件覆盖它们等于替用户把 secret 限制和报错显示打开（scriptErrors=1 是一定生效的那个）。
--- 需要复现受限上下文时手动执行：/script SetTestSecret(1)；恢复：/script SetTestSecret(0)
+-- 加载时不自动改 CVar（secret*RestrictionsForced / scriptErrors 属于用户设置）；
+-- 需要复现受限上下文时手动：/script SetTestSecret(1)，恢复 SetTestSecret(0)
 
 function CyberDeck:IterateGroupMembers(reversed, forceParty)
     local unit = (not forceParty and IsInRaid()) and 'raid' or 'party'

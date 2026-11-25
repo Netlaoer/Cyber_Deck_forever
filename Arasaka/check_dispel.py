@@ -101,10 +101,8 @@ def main():
     print("  >> 身上有可驱减益的槽位：%s" % (nz if nz else "（无）"))
 
     # --- 2b) 原始像素：读每格中心，确认真实颜色和秒数一致 ---
-    #     Lua 侧每个类型一格，蓝通道 = 同类最长剩余秒数
-    #       0 = 没有；1 = 不足一秒；255 = 永久/超 255 秒
-    #     ★ 扫描必须走 GetPixels.decode_top_row（510 格 + 中心采样），
-    #       不能再按 255 格自己算 x。
+    #     每类型一格，蓝通道 = 同类最长剩余秒数（0 无 / 1 不足一秒 / 255 永久）
+    #     ★ 扫描必须走 GetPixels.decode_top_row（510 格 + 中心采样），不能按 255 格自己算 x
     try:
         import ctypes
         from ctypes import wintypes

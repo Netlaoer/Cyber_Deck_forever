@@ -19,20 +19,16 @@ SEAL_COMMAND = 2       # 命令圣印
 SEAL_WISDOM = 5        # 智慧圣印
 SEAL_FURY = 6          # 愤怒圣印
 
-# 防护圣印：法力低于 50% 立即换智慧回蓝；
-# 回到阈值以上时不立即取消——等这颗智慧的 buff 自己到期，下次才换回愤怒。
+# 防护：法力低于 50% 换智慧回蓝；回到阈值以上等这颗智慧到期再换回
 SEAL_WISDOM_LOW = 50
 
 CD_UNAVAILABLE = 255
 
-# 清洁术能驱散的减益：按 魔法 > 疾病 > 中毒 的优先级
-# （Lua 侧每人每种类型一格，蓝通道 = 同类最长剩余秒数；字段名与 config.yml 的 group 一致）
+# 清洁术可驱：魔法 > 疾病 > 中毒（字段名与 config.yml 的 group 一致）
 CLEANSE_FIELDS = ("魔法", "疾病", "中毒")
 
-# 目标生物类型：插件不读 UnitCreatureType（地图限制下是 secret 值，不能做 ==3/==6 比较），
-# 所以「驱邪术 / 神圣愤怒」这类只对亡灵+恶魔生效的法术没有可靠的施放条件，已从循环里撤掉。
-# 想加回来的话：Lua 侧读 UnitCreatureType 并用 canaccessvalue 兜底，新增一个像素，
-# config.yml 加字段，决策层再按类型分支。
+# 不读目标生物类型（secret，无法比较 ==3/==6）：驱邪术/神圣愤怒已从循环撤掉。
+# 要加回来需 Lua 侧新增一个类型像素 + config.yml 加字段。
 
 # 20 号像素的圣印编号 -> 技能名（69-75 号像素用来判断“学会没学会”）
 SEAL_SPELLS = {
@@ -76,8 +72,7 @@ def _first_known_seal(spells, order):
 
 # 圣印持续时间（和 core/auras.lua 的 duration 一致），用于本地兜底
 SEAL_DURATION = 30.0
-# 最近一次"下达换智慧指令"的时刻。战斗中施放的 spellID 是 secret，
-# auras 的计时建不起来 → 198 号剩余恒 0；此时用这个时刻推算还剩多久。
+# 最近一次换智慧的时刻：战斗中 spellID 是 secret，auras 计时建不起来，用它推算剩余
 _wisdom_cast_at = {"t": time.time()}   # 以模块加载时刻为起点：重载后正挂着智慧也不会被误判到期
 def _prot_seal(spells, mana, current_seal=None, seal_remaining=0):
     now = time.time()
@@ -99,11 +94,8 @@ def _ret_seal(spells, mana):
     return _first_known_seal(spells, (SEAL_WISDOM, SEAL_JUSTICE))
 
 
-# 审判门控（只用于防护）。无限服审判不消耗圣印，所以可以放心按圣印分支：
-#   愤怒圣印：审判 debuff 没有维持价值，CD 好了就放
-#   智慧圣印：目标身上已经有智慧审判(20354)就不放，省一个 GCD 和一次蓝
-#   其它圣印：维持原行为（CD 好了就放）
-# 目标智慧审判像素：0 = 没有，1 = 不足 1 秒，>=2 = 有（数值就是剩余秒数）
+# 审判门控（仅防护，审判不消耗圣印）：愤怒印 CD 好就放；
+# 智慧印目标已有智慧审判就不放。像素：0 没有，1 不足 1 秒，>=2 有（数值即剩余秒数）
 JUDGE_DEBUFF_MIN = 2
 
 
@@ -115,8 +107,7 @@ def _judge_gate(seal, target_judge_remaining):
     return True
 
 
-# 施法失败像素 = 失败技能的块索引（无限服 class/Paladin.lua 布局：27 制裁之锤 / 28 圣盾术）
-# 自由祝福在无限服只是静态宏、没有块，失败时写不出像素，这里就不重试它。
+# 施法失败像素 -> 技能名（27 制裁之锤 / 28 圣盾术）；自由祝福没有块，不重试
 failed_spell_map = {
     27: "制裁之锤",
     28: "圣盾术",
@@ -177,7 +168,7 @@ def _pick_dispel_unit(state_dict, 驱散开关):
 def run_paladin_logic(state_dict, spec_name):
     spells = state_dict.get("spells") or {}
 
-    # 注意：「有效性」（死亡 / 坐骑 / 打字 / 吃喝）由调度层统一判断——
+    # 有效性（死亡/坐骑/打字/吃喝）由调度层统一判断
 
     # ==================== 公共状态 ====================
     战斗 = bool(state_dict.get("战斗", False))
@@ -196,8 +187,7 @@ def run_paladin_logic(state_dict, spec_name):
     鼠标可驱 = _int(state_dict, "鼠标可驱")
     当前圣印 = _int(state_dict, "圣印")
     圣印剩余 = _int(state_dict, "圣印剩余")
-    # 目标身上的智慧审判 debuff（20354）剩余秒数：0 = 没有，>=2 = 有
-    # 引擎 AuraContainer 写（class/Paladin.lua 340 号格），战斗中同样有效
+    # 目标智慧审判（20354）剩余秒数：引擎 AuraContainer 写 340 格，0 = 没有
     目标智慧审判 = _int(state_dict, "目标智慧审判")
 
     正义之怒 = _int(state_dict, "正义之怒")
@@ -236,9 +226,7 @@ def run_paladin_logic(state_dict, spec_name):
 
     # ==================== 神圣 ====================
     if spec_name == "神圣":
-        # 选中友方（11~20）时临时当作敌对，让进攻块照常执行。
-        # 正式服这里还处理了"无目标但战斗中有焦点"，靠的是 @focustarget 宏；
-        # 无限服的审判/震击是纯 /cast，无目标就会空按，所以不伪造 0 的情况。
+        # 选中友方时临时当敌对，让进攻块照常执行；无目标不伪造（纯 /cast 会空按）
         if 11 <= orig_目标类型 <= 20:
             state_dict["目标类型"] = 2
             目标类型 = 2
@@ -260,8 +248,7 @@ def run_paladin_logic(state_dict, spec_name):
             "HP<60%人数": HP60,
         }
 
-        # 驱散优先级：魔法 > 疾病 > 中毒，受 /cy dispel 开关控制
-        # （原来这里手写了一遍，绕过了 驱散开关，导致关掉开关照样驱散）
+        # 驱散优先级 魔法 > 疾病 > 中毒，受 /cy dispel 开关控制
         驱散单位 = _pick_dispel_unit(state_dict, 驱散开关)
 
         if 引导 > 0 or 延迟 > 0:
@@ -271,8 +258,7 @@ def run_paladin_logic(state_dict, spec_name):
             current_step = f"施放 {失败法术}"
             action_hotkey = get_hotkey(0, 失败法术)
 
-        # 只走动态宏（@raidN）。单人时它的宏体第三段是 [@player]，等于给自己驱散，
-        # 不需要额外的 unit 0 静态宏。
+        # 只走动态宏（@raidN）；单人时宏体第三段是 [@player]，等于给自己驱散
         elif 清洁术CD == 0 and 驱散单位 is not None:
             current_step = f"施放 清洁术 on {驱散单位}"
             action_hotkey = get_hotkey(int(驱散单位), "清洁术")
@@ -347,13 +333,11 @@ def run_paladin_logic(state_dict, spec_name):
         if 法术失败 != 0 and 失败法术 is not None:
             current_step = f"施放 {失败法术}"
             action_hotkey = get_hotkey(0, 失败法术)
-        # 驱散：开关开 -> 自动驱散所有队友（@raidN，单人时 @player 兜底就是自己）
-        #       开关关 -> 鼠标指向（判断和施法都看 mouseover：unit 0 的 [@mouseover] 宏）
+        # 驱散：开关开 -> 自动驱队友；开关关 -> 鼠标指向（unit 0 的 [@mouseover]）
         elif 清洁术CD == 0 and 驱散开关 and 驱散单位 is not None:
             current_step = f"施放 清洁术 on {驱散单位}"
             action_hotkey = get_hotkey(int(驱散单位), "清洁术")
-        # 鼠标指向的人身上有本职业能驱的减益（引擎写「鼠标可驱」剩余秒数，> 0 就按；
-        # 战斗中同样有效，因为和队友驱散同源、引擎自己算，不读光环）
+        # 「鼠标可驱」> 0 就按；引擎算剩余，战斗中同样有效
         elif 清洁术CD == 0 and not 驱散开关 and 鼠标可驱 > 0:
             current_step = "施放 清洁术 on 鼠标指向"
             action_hotkey = get_hotkey(0, "清洁术")
@@ -365,22 +349,18 @@ def run_paladin_logic(state_dict, spec_name):
             current_step = "补 正义之怒"
             action_hotkey = get_hotkey(0, "正义之怒")
         elif 战斗 and _is_enemy(目标类型):
-            # 圣印：常驻 30 秒。施放成功事件里 spellID 可读（实测确认），
-            # 所以 auras 计时、20 号编号、198 号剩余在战斗中都是准的 —— 只看"编号对不对"。
-            # 不设防抖：编号一更新条件就不成立；万一像素滞后多按一次，游戏 GCD 也会挡掉。
+            # 圣印常驻 30 秒，施放成功时 spellID 可读，所以 20 号编号与 198 号剩余是准的；
+            # 不设防抖：编号一更新条件就不成立，多按一次也有 GCD 挡
             if 想要圣印 is not None and 当前圣印 != 想要圣印 and not 正在读条:
                 seal_name = SEAL_SPELLS[想要圣印]
                 current_step = f"换 {seal_name}"
                 action_hotkey = get_hotkey(0, seal_name)
-            # 神圣之盾：CD 10 秒 / 持续 10 秒，卡 CD 补——和审判一样，只看 CD，不看 buff。
-            # 持续与 CD 等长：buff 被提前打掉时 CD 还在转，CD 一好就补才能无缝覆盖；
-            # 若 buff 因天赋/装备被延长，CD 好了也照补（刷新格挡次数）。
-            # 没学会时 CD 像素是 255，条件不成立，不会空按。
+            # 神圣之盾：CD 10 秒 = 持续 10 秒，卡 CD 补（buff 被提前打掉也能无缝覆盖）；
+            # 未学会时 CD 像素 255，条件不成立
             elif 神圣之盾CD == 0 and 五码敌人 >= 1:
                 current_step = "补 神圣之盾"
                 action_hotkey = get_hotkey(0, "神圣之盾")
-            # 审判：看圣印分支（无限服审判不消耗圣印）
-            #   愤怒印 -> 不看 debuff；智慧印 -> 目标已有智慧审判就不放
+            # 审判看圣印分支（审判不消耗圣印），智慧印已有 debuff 就不放
             elif (审判CD == 0 and _in_melee(目标距离)
                   and _judge_gate(当前圣印, 目标智慧审判)):
                 current_step = "审判"
@@ -392,17 +372,13 @@ def run_paladin_logic(state_dict, spec_name):
             elif 神圣打击CD == 0 and _in_melee(目标距离, 5):
                 current_step = "神圣打击"
                 action_hotkey = get_hotkey(0, "神圣打击")
-            # 神圣愤怒（= 经典驱邪术）：不做了。插件读不到目标的生物类型，
-            # UnitCreatureType 在地图限制下是 secret 值，不能做 ==3/==6 比较；
-            # 盲放只会对着普通怪红字报错、白费一个 GCD。
-            # 兜底起手：必须最后。放最前面会让后面全部 elif 被挡死——
-            # /reload 后自动攻击像素是 0，整条链就再也出不来（表现为一个技能都不放）。
-            # 「战斗且有敌人」为前提：脱战时按它没意义，还会挤掉维持类技能。
+            # 驱邪/神圣愤怒不做了：读不到生物类型，盲放只会红字报错。
+            # 兜底起手必须放最后：放前面会挡死后面所有 elif，/reload 后一个技能都不出；
+            # 「战斗且有敌人」为前提，脱战时按它只会挤掉维持类技能。
             elif 战斗 and _is_enemy(目标类型) and 自动攻击 == 0 and _upkeep_ok("开始攻击", 2):
                 current_step = "开始攻击"
                 action_hotkey = get_hotkey(0, "开始攻击")
-        # 战斗中但当前没敌人（目标刚死、战斗未结束）：仍维持圣印，别等下一个目标现挂。
-        # 脱战一律不补——非战斗时按键只会干扰操作（打字、坐骑、看背包）。
+        # 战斗中没敌人（目标刚死）仍维持圣印；脱战不补，免得干扰打字/坐骑
         elif (战斗 and 想要圣印 is not None and 当前圣印 != 想要圣印
                 and not 正在读条):
             seal_name = SEAL_SPELLS[想要圣印]
@@ -451,8 +427,7 @@ def run_paladin_logic(state_dict, spec_name):
             elif 神圣打击CD == 0 and _in_melee(目标距离, 5):
                 current_step = "神圣打击"
                 action_hotkey = get_hotkey(0, "神圣打击")
-            # 驱邪术（= 经典驱邪术 5615，只对亡灵/恶魔）：不做了，同上，读不到生物类型。
-            # 奉献：身边 ≥2 个才放（5 码内敌人数，不是全场人数）
+            # 驱邪术同上不做；奉献：5 码内 ≥2 个才放
             elif 奉献CD == 0 and 五码敌人 >= 2 and 能量值 >= 30:
                 current_step = "奉献 (AoE)"
                 action_hotkey = get_hotkey(0, "奉献")
