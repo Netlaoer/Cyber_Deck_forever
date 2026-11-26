@@ -187,11 +187,9 @@ def run_paladin_logic(state_dict, spec_name):
     鼠标可驱 = _int(state_dict, "鼠标可驱")
     当前圣印 = _int(state_dict, "圣印")
     圣印剩余 = _int(state_dict, "圣印剩余")
-    # 目标智慧审判（20354）剩余秒数：引擎 AuraContainer 写 340 格，0 = 没有
     目标智慧审判 = _int(state_dict, "目标智慧审判")
-
     正义之怒 = _int(state_dict, "正义之怒")
-
+    圣光灌注 = _int(state_dict, "圣光灌注")
     圣疗术CD = _cd(spells, "圣疗术")
     圣盾术CD = _cd(spells, "圣盾术")
     # ---- 正式服专有上下文（无限服没有对应数据源）----
@@ -209,7 +207,6 @@ def run_paladin_logic(state_dict, spec_name):
     神圣之盾CD = _cd(spells, "神圣之盾CD")
     自动攻击 = _int(state_dict, "自动攻击")
     正义之怒CD = _cd(spells, "正义之怒CD")
-
     正在读条 = 施法 > 0 or 引导 > 0
 
     action_hotkey = None
@@ -277,7 +274,7 @@ def run_paladin_logic(state_dict, spec_name):
                 current_step = "施法 圣疗术"
                 # 自救走 [@player] 静态宏（staticSpells[9]），不要用 unit 1（团队里是 raid1）
                 action_hotkey = get_hotkey(0, "圣疗术")
-            elif 战斗 :
+            else:
                 守望单位, _ = get_unit_with_aura(state_dict, "圣光守望")
                 # 圣光誓约：坦克身上没有就补（5 分钟长 buff，只挂一个）
                 誓约单位, _ = get_unit_with_role_and_without_aura_name(state_dict, 1, "圣光誓约")
@@ -287,17 +284,17 @@ def run_paladin_logic(state_dict, spec_name):
                 elif 誓约单位 is not None and not 施法:
                     current_step = f"圣光誓约 -> {誓约单位}"
                     action_hotkey = get_hotkey(int(誓约单位), "圣光誓约")
-                elif not 施法 and not 移动 and 最低生命值 < 60:
+                elif not 施法 and not 移动 and 最低生命值 < 50 and 圣光灌注 > 0:
                     current_step = "站桩 圣光术"
                     action_hotkey = get_hotkey(int(最低单位), "圣光术")
                 # 群抬：圣光守望没有冷却，只看震击剩余和低血人数
-                elif 神圣震击CD <= 2 and not 移动 and HP75 >= 3:
+                elif 神圣震击CD <= 2 and not 移动 and HP60 >= 3:
                     current_step = "群奶 圣光守望"
                     action_hotkey = get_hotkey(int(最低单位), "圣光守望")
-                elif not 施法 and not 移动 and 最低生命值 <= 90:
+                elif not 施法 and not 移动 and 最低生命值 <= 80:
                     current_step = "圣光闪现"
                     action_hotkey = get_hotkey(int(最低单位), "圣光闪现")
-                elif 神圣震击CD == 0 and not 施法 and 最低生命值 < 95:
+                elif 神圣震击CD == 0 and not 施法 and 最低生命值 < 80:
                     current_step = "施放 神圣震击"
                     action_hotkey = get_hotkey(int(最低单位), "神圣震击")
  
