@@ -33,7 +33,7 @@ AI_INSTRUCTION（AI 必读）：
 
 ### 特性
 
-- **不读写内存、不注入**：游戏状态压进屏幕顶部 255 个色块的 RGB 值，外部截图解码
+- **不读写内存、不注入**：游戏状态压进屏幕顶部 510 个色块（分档编码）的 RGB 值，外部截图解码
 - **无限服专用**：Lua 层只走本服路径（Interface 16001），无其它版本分支
 - **9 个职业**：战士/圣骑/猎人/盗贼/牧师/萨满/法师/术士/德鲁伊，各有独立的像素布局与决策逻辑
 - **零侵入操作**：`PostMessage` 后台发键，不抢焦点，可以边挂机边打字
@@ -194,11 +194,12 @@ utils.send_key_to_wow() → PostMessage → WoW 窗口
 
 ## 五、像素编码原理
 
-- **255 个像素**，宽 = 屏幕宽度/255，高 2px
-- 颜色编码：`RGB = (0, index/255, value/255)`
-  - G 通道 = 索引号（1~255），标识数据含义
-  - B 通道 = 数值（0~1），通过颜色曲线映射
-- 充能进度条：第二行，255 像素宽，20px 高
+- **510 个像素**（分档编码），宽 = 屏幕宽度/511，高 2px
+- 颜色编码分两档：
+  - 索引 1~255：`RGB = (0, index/255, value/255)`
+  - 索引 256~510：`RGB = (1/255, (index-255)/255, value/255)`
+  - G 通道 = 索引号，标识数据含义；B 通道 = 数值（0~1），通过颜色曲线映射
+- 充能进度条：第二行，与色条同宽，20px 高
 - 左边界红/白标记对用于 Python 定位
 
 ---
@@ -581,7 +582,7 @@ Python 通过 `PostMessage(WM_KEYDOWN/WM_KEYUP)` 向 WoW 窗口发送按键：
 /cy macro     # 宏数量 / 键位总数 / 抽样宏体（宏表改过必看）
 
 # 命令行（需要游戏窗口活着，从像素行读真实数据）
-D:/DevTools/pyenv-re313/Scripts/python.exe Arasaka/check_dispel.py
+python Arasaka/check_dispel.py
 ```
 
 **离线回归**（工作区 `_work/`，不随插件发布；全部不需要进游戏）：
@@ -612,16 +613,16 @@ node run_lua.js _work/test_p0_fixes.lua
 node run_lua.js _work/test_group_aura.lua
 node run_lua.js _work/test_paladin_layout.lua
 node run_lua.js _work/test_keybinds.lua
-D:/DevTools/python313/python.exe _work/test_macro_budget.py
-D:/DevTools/python313/python.exe _work/test_secret_safety.py
-D:/DevTools/pyenv-re313/Scripts/python.exe _work/test_pixel_e2e.py
-D:/DevTools/pyenv-re313/Scripts/python.exe _work/test_layouts_all.py
-cd _work && D:/DevTools/pyenv-re313/Scripts/python.exe test_dispel_logic.py
-cd _work && D:/DevTools/pyenv-re313/Scripts/python.exe test_dispel_all.py
+python _work/test_macro_budget.py
+python _work/test_secret_safety.py
+python _work/test_pixel_e2e.py
+python _work/test_layouts_all.py
+cd _work && python test_dispel_logic.py
+cd _work && python test_dispel_all.py
 ```
 
-> 两个解释器分工：`python313` 只跑纯 Python（yaml/ast），`pyenv-re313` 带 `mss` 等逆向依赖。
-> `test_pixel_e2e.py` 要 `mss` 之外还 import `GetPixels`，所以用 `pyenv-re313`。
+> 依赖：`test_pixel_e2e.py` 需要 `mss`（并 import 插件自带的 `GetPixels`），
+> 其余纯 Python 脚本只需要 `pyyaml`。
 
 ---
 
@@ -1039,13 +1040,13 @@ GUI 把像素值分成三块展示，避免语义混淆：
 
 ```bash
 # class ↔ config ↔ 510 容量 ↔ 队伍区间不重叠（27 个专精逐个查）
-D:/DevTools/pyenv-re313/Scripts/python.exe _work/test_layouts_all.py
+python _work/test_layouts_all.py
 
 # macro.lua ↔ gen_class_keymap.py ↔ keymap/*.yml 逐行同序（改宏表必跑）
-D:/DevTools/python313/python.exe _work/test_macro_budget.py
+python _work/test_macro_budget.py
 
 # logic ↔ config 字段（五个有驱散职业的端到端选人）
-cd _work && D:/DevTools/pyenv-re313/Scripts/python.exe test_dispel_all.py
+cd _work && python test_dispel_all.py
 ```
 
 改宏表后要重生成 keymap：`python Arasaka/other/gen_class_keymap.py`（旧的
@@ -1202,7 +1203,7 @@ button:SetPoint("TOPLEFT", UIParent, "TOPLEFT", rect.x, 0)
 ### 排查
 
 ```bash
-D:/DevTools/pyenv-re313/Scripts/python.exe Arasaka/check_dispel.py
+python Arasaka/check_dispel.py
 ```
 
 游戏内先敲 `/cy dispelprobe`，判读：
@@ -1267,7 +1268,7 @@ dynamicSpells = { "驱散魔法", "祛病术" },   -- ✓ 按队友施放
 **Python 侧一键诊断**（读真实像素，直接告诉你卡在哪一环）：
 
 ```bash
-D:/DevTools/pyenv-re313/Scripts/python.exe Arasaka/check_dispel.py
+python Arasaka/check_dispel.py
 ```
 
 它会打印：驱散开关 / 有效性 / group 每格的 生命值·职责·驱散 / 驱散技能 CD，
@@ -1378,7 +1379,6 @@ D:/DevTools/pyenv-re313/Scripts/python.exe Arasaka/check_dispel.py
 | `main.lua` 的驱散探测实验脚手架（`DT2`~`DT8` / `dt*_safeStr` / `dt3_probe` / `dt4_access` / `dt7_*` / `DT8_PROBES`） | **已删除**（2026-11-21）。8 轮实验的结论已固化进生产路径，代码本身零引用 |
 | `core/forever.lua` 的 debuff 学习表（`dispelTypeFromName` / `LearnDebuffTypes` / `QueryDispelBySpellTable`）+ `db.char.dispelSpellTypes` | **已删除**。「脱战学表→战斗查表」实测走不通（受限时按 ID 查询返回 nil，无法区分命中与读不到），现改为调 `C_UnitAuras.GetAuraDispelTypeColor` 直接取类型（正式服同款） |
 | `main.lua` 的 `clearGroupBlocks` | **已删除**（2026-11-21）。队伍块清零已由 `updateGroup` 重建 + Python 端 `_role_not_zero` 过滤覆盖 |
-| `core/core.lua` help 里的 `/cy dispeltest` | **已删除**。该命令分支从来就不存在 |
 | `core/block.lua` 的 `countBars` / `CreateAutoLayoutBar` / `ClearAllCyberDeckBars` | **曾删除，已还原**（2026-11-24）。原判据是「9 个职业都没配 `countBars` → 从未执行」，但**没配置只说明当前不用，不说明以后不用**（连击点 / 神圣能量 / 充能条都要它）。代码按 HEAD 原文贴回，并加「预留能力，勿删」标注。见 17.5.1 |
 | 不支持职业（死骑/武僧/DH/唤魔师）的 nil 崩 | **已改为空转**（2026-11-24）：`loadPlayerBlocks` 给一套空表，`CreatTexture` 跳过 nil 索引，不再抛 `attempt to index a nil value`；同时清掉了这 4 个职业的历史 `.pyc` |
 | `core/keybinds.lua` + `config.lua` 的 `actionBars` / `keymap` | **曾删除，已还原**（2026-11-24）。它确实有执行、有产出（`CyberDeck.keybindings`），只是当前没有消费方 —— 属「语义性闲置」，按 17.5 的准则应保留。文件、两张表、`OnEnable`/`SPELLS_CHANGED` 里的 `readKeybindings()` 与 `UPDATE_BINDINGS` / `ACTIONBAR_SHOWGRID` / `ACTIONBAR_HIDEGRID` 注册均已还原（`ACTIONBAR_*` 顺带能刷新宏键位） |
@@ -1459,17 +1459,17 @@ D:/DevTools/pyenv-re313/Scripts/python.exe Arasaka/check_dispel.py
 
 ```bash
 # 1) Lua 语法（排除 Libs/）
-"D:/DevTools/lua54/lua-5.4.6/src/luac.exe" -p <每个 .lua 文件>
+luac -p <每个 .lua 文件>
 
 # 2) Python + YAML 语法
 python -m py_compile <每个 .py 文件>
 python -c "import yaml; yaml.safe_load(open('Arasaka/config.yml',encoding='utf-8'))"
 
 # 3) 布局/配置断链（像素 ↔ config ↔ 容量 ↔ 区间重叠）
-D:/DevTools/pyenv-re313/Scripts/python.exe _work/test_layouts_all.py
+python _work/test_layouts_all.py
 
 # 4) 宏位与 keymap 顺序（抓「点了没反应」这类静默故障）
-D:/DevTools/python313/python.exe _work/test_macro_budget.py
+python _work/test_macro_budget.py
 ```
 
 > 只跑语法检查会漏掉「函数被吞并」「分支被挡死」「配置断链」这类结构性问题。
