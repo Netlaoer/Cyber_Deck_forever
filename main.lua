@@ -61,9 +61,10 @@ end
 
 local curve100 = creatColorCurveScaling(100)
 
--- 队伍生命曲线必须脱战预建（战斗中不允许首次 CreateColorCurve）。取值只有
--- 100 + inComingHeals(15/40/50) - healAbsorb(15/0)
-for _, b in ipairs({ 85, 115, 125, 135, 140, 150 }) do
+-- 队伍生命曲线必须脱战预建（战斗中不允许首次 CreateColorCurve）。
+-- b = 100 + inComingHeals - healAbsorb：inComingHeals 取自下方 helpfulSpells（15/20/50），
+-- healAbsorb 只有 0/15，全组合 = 85/105/115/120/135/150（125/140 是 40% 治疗预留）
+for _, b in ipairs({ 85, 105, 115, 120, 125, 135, 140, 150 }) do
     creatColorCurveScaling(b)
 end
 
@@ -1265,6 +1266,8 @@ local function updateUnitHealAbsorbCurve(unit)
         if group[unit] and group[unit] == obj then
             obj.healAbsorb = 0
             obj.curveTimer = nil
+            -- 吸收窗口结束要重算这一格，否则会停在「减 15」的旧值直到下次事件
+            CyberDeck:updateUnitHealthInfo(unit)
         end
     end)
 end
@@ -1607,6 +1610,12 @@ function CyberDeck:UNIT_SPELLCAST_STOP(_, unitTarget, castGUID, spellID, castBar
     end
 end
 
+function CyberDeck:UNIT_SPELLCAST_INTERRUPTED(_, unitTarget, castGUID, spellID, castBarID)
+    -- 打断的清理与 STOP 完全一致：不清的话在途治疗的 +15/+50 会一直挂在目标血格上，
+    -- 坦克半血会被读成满血（Shingen 也是 STOP + INTERRUPTED 两处都清）
+    self:UNIT_SPELLCAST_STOP(_, unitTarget, castGUID, spellID, castBarID)
+end
+
 function CyberDeck:UNIT_SPELLCAST_CHANNEL_START(_, unitTarget, castGUID, spellID, castBarID)
     if unitTarget == "player" then
         state.channeling = true
@@ -1701,6 +1710,9 @@ function CyberDeck:UNIT_HEALTH(_, unit)
         self:updateTargetHealth()
     end
     if group[unit] then
+        -- 血量变化即时写格：OnUpdate 的队伍轮询每帧只处理 1 人，
+        -- 40 人一轮要 40 帧（60fps 约 0.67s），光靠轮询会比血条慢好几拍
+        self:updateUnitHealthInfo(unit)
         updateUnitDeathByHealthInfo(unit)
     end
 end
@@ -1710,6 +1722,8 @@ function CyberDeck:UNIT_MAXHEALTH(_, unit)
         self:updatePlayerHealth()
     end
     if group[unit] then
+        -- 最大血量变了，百分比跟着变，立即重算
+        self:updateUnitHealthInfo(unit)
         updateUnitDeathByHealthInfo(unit)
     end
 end
@@ -1720,6 +1734,8 @@ function CyberDeck:UNIT_HEAL_ABSORB_AMOUNT_CHANGED(_, unit)
     end
     if group[unit] then
         updateUnitHealAbsorbCurve(unit)
+        -- healAbsorb 改了 -> 曲线 b 变了，必须按新曲线重算这一格
+        self:updateUnitHealthInfo(unit)
         updateUnitDeathByHealthInfo(unit)
     end
 end
@@ -1729,6 +1745,8 @@ function CyberDeck:UNIT_HEAL_PREDICTION(_, unit)
         self:updatePlayerHealth()
     end
     if group[unit] then
+        -- 治疗预测变化也意味着血量会变，顺手刷一次（Shingen 同样在这条事件里刷血量）
+        self:updateUnitHealthInfo(unit)
         updateUnitDeathByHealthInfo(unit)
     end
 end
@@ -2065,6 +2083,7 @@ function CyberDeck:StartFrameUpdates()
 end
 
 CyberDeck.timeElapsed = 0
+CyberDeck.enemyElapsed = 0
 function CyberDeck:OnUpdate(elapsed)
     -- 1. 高频逻辑（每帧）；成员函数用 self: 调用
     self:updatePlayerCastingInfo()
@@ -2082,12 +2101,22 @@ function CyberDeck:OnUpdate(elapsed)
         self:OnUpdateUnitAura()
         self:updateAura()
         self:updateTargetRangeBlock()
-        self:updateEnemyCount()
         self:updateItemCoolDown()
         self:UpdateForeverAuras()
         self:updateAuraBlocks()      -- 338 圣印剩余等「光环型」像素
         self:UpdateForeverAutoAttack()
         -- 队伍驱散容器由 updateGroup（花名册变化）和进/脱战重刷驱动，不在 OnUpdate 轮询
         self.timeElapsed = 0
+    end
+
+    -- 3. 姓名板档（0.2 秒）：LibRangeCheck:GetRange 是整个 OnUpdate 里最重的调用，
+    --    只写「敌人人数/5码敌人」这类姓名板像素，与队伍血量（事件驱动）、
+    --    队伍光环/圣印（上面 0.12s 档）完全解耦，降频不影响它们。
+    --    ★ 不能设 0.1：LibRangeCheck 默认缓存寿命就是 0.1s（GetRange 第 4 参不传时），
+    --      间隔 >=0.1 每次都是 cache miss、全量扫描，等于白花双倍开销。
+    self.enemyElapsed = self.enemyElapsed + elapsed
+    if self.enemyElapsed > 0.2 then
+        self:updateEnemyCount()
+        self.enemyElapsed = 0
     end
 end

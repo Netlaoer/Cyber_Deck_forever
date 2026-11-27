@@ -1080,12 +1080,19 @@ cd _work && python test_dispel_all.py
 
 | 相对格 | 内容 | 说明 |
 |---|---|---|
-| 1 | 生命值 | 0~100 |
+| 1 | 生命值 | `实际% + 在途治疗% − 吸收%`，满血无加成 = 100 |
 | 2 | 职责 | 0=无 1=坦 2=治疗 3=输出 |
 | 3 | 魔法 | 剩余秒数 |
 | 4 | 疾病 | 剩余秒数 |
 | 5 | 中毒 | 剩余秒数 |
 | 6/7 | 圣光守望 / 圣光誓约 | 仅神圣；与驱散同源，走引擎 slot（`groups.auras` → `includeSpellIDs`） |
+
+> **生命值格由事件驱动写**：`main.lua` 的 `UNIT_HEALTH` / `UNIT_MAXHEALTH` /
+> `UNIT_HEAL_ABSORB_AMOUNT_CHANGED` / `UNIT_HEAL_PREDICTION` 都直接调 `updateUnitHealthInfo`。
+> **本服固定用 `usePredicted = false`**：改成 `true` 那一版上线后职责格停写、全团不驱散
+>（职责格是 Python `_role_not_zero` 的开关），回退 `false` 即恢复。
+> `OnUpdate` 里 `updateGroupInRangeAndHealth` 每帧轮询 1 人（40 人一轮 ≈ 0.67s），只负责职责/距离，
+> 血量新鲜度靠上面四条事件，不靠轮询。
 
 > 6/7 这两格**也由引擎写**（`core/group_aura.lua` 的 buff slot），不是 Lua 读光环：
 > Lua 路径（`main.lua:OnUpdateUnitAura`）在容器建好后由 `CyberDeck.groupAuraBuffEngineReady`
@@ -1312,7 +1319,7 @@ python Arasaka/check_dispel.py
 | 加一个宏 | `class/<职业>.lua` 的 `MacrosList` | 普通技能进 `staticSpells`；`@raidN` 循环施放进 `dynamicSpells`（每个占 30 位）；完整宏体（`/castsequence`、`/startattack`）进 `specialSpells` |
 | 加一条决策分支（技能优先级） | `Arasaka/class/<职业>_logic.py` | 读数用本文件自带的 `Ctx`（`ctx.hp/ctx.ready(name)/ctx.melee`…）；条件用本文件的 `_is_enemy` / `_in_melee`；维持类操作加 `_upkeep_ok(name, 秒)` 防抖。**分支顺序 = 优先级**，第一个满足就返回 |
 | 调决策松紧（阈值） | logic 顶部常量（`AOE_3` / `AOE_5` / `HEAL_LOW`…） | 改常量即可，不必动逻辑代码。各职业的常量清单见 `Progress/<职业>.md` 的「阈值常量」表 |
-| 读敌人数量 / 5 码敌人 | `main.lua:updateEnemyCount` | 已有 `state.enemyCount` / `state.enemyCount5y` → 像素 `敌人人数` / `5码敌人` |
+| 读敌人数量 / 5 码敌人 | `main.lua:updateEnemyCount` | 已有 `state.enemyCount` / `state.enemyCount5y` → 像素 `敌人人数` / `5码敌人`；`OnUpdate` 单独走 0.2s 档（LibRangeCheck 缓存本身只有 0.1s，设 0.1 等于双倍全量扫描） |
 | 读目标距离 | `main.lua:updateTargetRangeBlock`（LibRangeCheck） | 像素 `目标距离`，单位码 |
 | 判断该不该放地面 AoE | `main.lua:updateEnemyCount` 的 `enemyCount5y` | 像素 `5码敌人`（41 号）= 姓名版里 ≤5 码且战斗中的人数；**依赖姓名版开启** |
 | 读目标类型（敌对/友善） | `main.lua:updateTargetType` + `updateTargetValid` | `目标类型`：0 无/超距/死亡，1~10 敌对，11~20 友善 |
