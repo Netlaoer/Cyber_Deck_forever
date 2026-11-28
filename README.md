@@ -290,7 +290,7 @@ char = { level, aoeMode, cooldowns, dpsMode, delay, potion,
 
 **线程模型**：按键检测 50ms / 逻辑执行 200ms / GUI 刷新 100ms
 
-### utils.py（25 个函数，写决策前先翻这里）
+### utils.py（27 个函数：25 个选择器 + 2 个按键发送内部工具，写决策前先翻这里）
 
 **配置与按键**
 
@@ -556,7 +556,7 @@ Python 通过 `PostMessage(WM_KEYDOWN/WM_KEYUP)` 向 WoW 窗口发送按键：
    - **文件顶部自带一套内部小工具**（`Ctx` / `_cd` / `_ready` / `_int` /
      `_is_enemy` / `_in_melee` / `_upkeep_ok` / `_pick_dispel_unit`）
      —— 照 `Progress/<职业>.md` 的「内部小工具」表抄，**各职业互不共用**
-   - 单位选择器从 `Arasaka/utils.py` 直接 import（**25 个函数都在，别重复实现**）：
+   - 单位选择器从 `Arasaka/utils.py` 直接 import（**25 个选择器都在，别重复实现**）：
      `get_lowest_health_unit` / `get_lowest_health_unit_with_aura` /
      `get_lowest_health_unit_without_aura` / `get_lowest_health_unit_with_aura_count` /
      `get_unit_with_role` / `get_unit_with_aura` / `count_units_with_aura` /
@@ -649,7 +649,7 @@ cd _work && python test_dispel_all.py
 ### Python 端规则
 
 - 职业逻辑返回 `(action_hotkey, current_step, unit_info)` 三元组
-- 优先使用 `utils.py` 工具函数（**25 个都在**，别重复实现，也别删）
+- 优先使用 `utils.py` 的选择器（**25 个都在**，别重复实现，也别删）
 - 修改后点击 GUI"重载"生效
 
 ### 常见陷阱
@@ -1304,7 +1304,7 @@ python Arasaka/check_dispel.py
 2. **这个「计时」需求能不能挂到 `core/auras.lua`？**
    只要是「施放成功后持续 N 秒」的东西，一律用光环状态机，不要自己维护 `until` 变量。
 3. **这个「选人 / 计数」需求 `Arasaka/utils.py` 有没有？**
-   25 个函数覆盖了低血、职责、带 buff、缺 buff、按层数、按驱散类型、批量计数。
+   25 个选择器覆盖了低血、职责、带 buff、缺 buff、按层数、按驱散类型、批量计数。
    **这些是跨职业通用件，即使当前职业没用到也不要删**（将来加职业直接 import）。
 
 ### 17.2 想做什么 → 改哪里

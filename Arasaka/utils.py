@@ -606,6 +606,45 @@ def get_unit_with_dispel_seconds(state_dict, field_name):
 WM_KEYDOWN = 0x0100
 WM_KEYUP   = 0x0101
 
+# 扩展键（照抄 Shigure Input/KeySender.cs:235-248 的 IsExtendedKey）
+#   WM_KEYDOWN/WM_KEYUP 的 lparam 第 24 位必须为 1，否则游戏会把它们当成
+#   小键盘同号键（UP->NUMPAD8、PAGEUP->NUMPAD9、HOME->NUMPAD7），
+#   或者走错分发分支 —— 表现就是按 CTRL-UP 时视角跟着动、画面抖动。
+_EXTENDED_KEYS = {
+    "RCTRL", "RALT", "NUMPADDIVIDE",
+    "INSERT", "DELETE", "HOME", "END",
+    "PAGEUP", "PAGEDOWN", "LEFT", "UP", "RIGHT", "DOWN",
+}
+_VK_DIVIDE = 0x6F
+
+
+def _is_extended_key(key_name):
+    """键名是否属于扩展键。"""
+    return bool(key_name) and key_name.strip().upper() in _EXTENDED_KEYS
+
+
+def _make_lparam(vk, key_up=False, extended=False):
+    """构造 WM_KEYDOWN / WM_KEYUP 的 lparam（照抄 Shigure KeySender.Post）
+
+    位段：
+      0     重复次数 = 1
+      16-23 硬件扫描码（MapVirtualKeyW 取）
+      24    扩展键标志
+      30    前次键状态（抬起时置位）
+      31    转换状态（抬起时置位）
+
+    之前只发 0x00000001 / 0xC0000001，缺扫描码和扩展键标志 ——
+    这是方向键/翻页键在游戏里被误识别的根因。
+    """
+    scan = ctypes.windll.user32.MapVirtualKeyW(vk, 0) & 0xFF
+    lp = 1 | (scan << 16)
+    if extended or vk == _VK_DIVIDE:
+        lp |= 1 << 24
+    if key_up:
+        lp |= (1 << 30) | (1 << 31)
+    return lp & 0xFFFFFFFF
+
+
 # 修饰键与常用键的虚拟键码（与 keymap 中的名称一致）
 _VK = {
     "SHIFT": 0x10,
@@ -613,6 +652,21 @@ _VK = {
     "CTRL": 0x11,
     "MENU": 0x12,
     "ALT": 0x12,
+    # 左右修饰键（Shigure WindowsVirtualKeyMap 同款）：
+    #   发 0xA2/0xA3 时游戏能否匹配 LCTRL/RCTRL 绑定，本服还未验证过 ——
+    #   当前 keymap 仍用通用 CTRL/ALT/SHIFT，这里只是把表补齐备用。
+    "LSHIFT": 0xA0, "RSHIFT": 0xA1,
+    "LCTRL": 0xA2, "RCTRL": 0xA3,
+    "LALT": 0xA4, "RALT": 0xA5,
+    # 导航键补全（_EXTENDED_KEYS 已声明 DELETE/LEFT/RIGHT，表里必须有对应 VK）
+    "DELETE": 0x2E, "LEFT": 0x25, "RIGHT": 0x27,
+    # 常用控制键（Shigure 有、原表缺）
+    "SPACE": 0x20, "ENTER": 0x0D, "RETURN": 0x0D,
+    "TAB": 0x09, "ESCAPE": 0x1B,
+    "BACKSPACE": 0x08, "BACK": 0x08,
+    "CAPSLOCK": 0x14, "CAPITAL": 0x14,
+    "NUMLOCK": 0x90, "SCROLL": 0x91, "PAUSE": 0x13,
+    "LBUTTON": 0x01, "RBUTTON": 0x02, "MBUTTON": 0x04,
     # 鼠标侧键（XButton1 / XButton2）
     "XBUTTON1": 0x05,
     "X1": 0x05,
@@ -658,7 +712,8 @@ def _parse_hotkey(hotkey_str):
     main_key = parts[-1]
     mods = []
     for p in parts[:-1]:
-        if p in ("CTRL", "CONTROL", "ALT", "MENU", "SHIFT"):
+        if p in ("CTRL", "CONTROL", "ALT", "MENU", "SHIFT",
+                 "LCTRL", "RCTRL", "LALT", "RALT", "LSHIFT", "RSHIFT"):
             if p == "CONTROL":
                 p = "CTRL"
             if p == "MENU":
@@ -720,23 +775,31 @@ def send_key_to_wow(keys_str, window_title="魔兽世界"):
     if not hwnd:
         return False
 
-    # 修饰键 VK 列表（按下顺序）
-    mod_vks = []
+    # 修饰键：(vk, 是否扩展键)，按下顺序，去重
+    mod_items = []
+    seen_vks = set()
     for m in mods:
         vk = _get_vk(m)
-        if vk is not None and vk not in mod_vks:
-            mod_vks.append(vk)
+        if vk is not None and vk not in seen_vks:
+            seen_vks.add(vk)
+            mod_items.append((vk, _is_extended_key(m)))
 
-    def post(key_code, key_up=False):
-        lparam = 0xC0000001 if key_up else 0x00000001
-        ctypes.windll.user32.PostMessageW(hwnd, WM_KEYUP if key_up else WM_KEYDOWN, key_code, lparam)
+    main_ext = _is_extended_key(main_key)
+
+    def post(key_code, key_up=False, extended=False):
+        # 不检查 PostMessageW 返回值：跨进程投递返回非 0 只代表「进了消息队列」，
+        # 不代表游戏处理了（微软文档明确说明）。真正失败时也没有调用方消费，
+        # 检查等于死代码。
+        lp = _make_lparam(key_code, key_up, extended)
+        ctypes.windll.user32.PostMessageW(
+            hwnd, WM_KEYUP if key_up else WM_KEYDOWN, key_code, lp)
 
     # 顺序：修饰键按下 -> 主键按下 -> 主键抬起 -> 修饰键抬起
-    for vk in mod_vks:
-        post(vk, key_up=False)
-    post(vk_main, key_up=False)
-    post(vk_main, key_up=True)
-    for vk in reversed(mod_vks):
-        post(vk, key_up=True)
+    for vk, ext in mod_items:
+        post(vk, key_up=False, extended=ext)
+    post(vk_main, key_up=False, extended=main_ext)
+    post(vk_main, key_up=True, extended=main_ext)
+    for vk, ext in reversed(mod_items):
+        post(vk, key_up=True, extended=ext)
 
     return True
